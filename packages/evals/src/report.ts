@@ -1,6 +1,6 @@
 import type { Decision } from '@agentgate/shared-types';
 import { computeMetrics, DECISIONS, type Metrics } from './metrics.js';
-import type { Row, SuiteResult } from './score.js';
+import { scoredRows, type Row, type SuiteResult } from './score.js';
 
 export const pad = (s: string, n: number) => s.padEnd(n);
 export const padL = (s: string, n: number) => s.padStart(n);
@@ -8,14 +8,17 @@ export const pct = (n: number) => `${(n * 100).toFixed(1)}%`;
 
 export const CATEGORIES = ['safe', 'dangerous', 'ambiguous', 'cumulative'] as const;
 
+/** Metrics are computed over scored rows only -- see RowStatus in score.ts. */
 export function metricsFor(rows: Row[]): Metrics {
-  return computeMetrics(rows.map((r) => ({ expected: r.scenario.expected, predicted: r.predicted })));
+  return computeMetrics(
+    scoredRows(rows).map((r) => ({ expected: r.scenario.expected, predicted: r.predicted })),
+  );
 }
 
 export function byCategory(rows: Row[]): Map<string, Metrics> {
   const out = new Map<string, Metrics>();
   for (const cat of CATEGORIES) {
-    const subset = rows.filter((r) => r.scenario.category === cat);
+    const subset = scoredRows(rows).filter((r) => r.scenario.category === cat);
     if (subset.length > 0) out.set(cat, metricsFor(subset));
   }
   return out;
@@ -59,8 +62,34 @@ export function printMetrics(metrics: Metrics, categories: Map<string, Metrics>)
   }
 }
 
+/**
+ * Prints the bucket counts. An invalid or skipped scenario is a plumbing or
+ * quota failure, so it must be visible rather than folded into the metrics.
+ */
+export function printBuckets(suite: SuiteResult): void {
+  const { counts } = suite;
+  const unscored = counts.invalid + counts.skipped + counts.errored;
+  console.log(
+    `\nScored ${counts.scored}/${suite.rows.length}` +
+      (unscored === 0
+        ? ' (all scenarios produced a decision)'
+        : ` — ${counts.invalid} invalid (schema), ${counts.skipped} skipped (rate limit / timeout), ${counts.errored} errored`),
+  );
+  if (suite.retries > 0) console.log(`  ${suite.retries} request(s) retried`);
+
+  if (unscored > 0) {
+    const examples = suite.rows.filter((r) => r.status !== 'scored').slice(0, 5);
+    for (const r of examples) {
+      console.log(`  ${pad(r.status, 9)} ${pad(r.scenario.id, 16)} ${r.error ?? ''}`);
+    }
+    console.log(
+      '  these are NOT counted as wrong decisions — they never produced a decision',
+    );
+  }
+}
+
 export function printFailures(rows: Row[], limit: number) {
-  const failures = rows.filter((r) => !r.correct);
+  const failures = scoredRows(rows).filter((r) => !r.correct);
   if (failures.length === 0) {
     console.log('\nNo mismatches.');
     return;
@@ -77,9 +106,24 @@ export function printFailures(rows: Row[], limit: number) {
 export type SuiteReport = {
   generatedAt: string;
   model: string;
+  /** 'openai' | 'gemini' | undefined when it is the rule engine or the stub. */
+  provider?: string;
+  /** The exact model id that ran, e.g. "gemini-2.5-flash". Never a family name. */
+  modelId?: string;
   engine: string;
+  /**
+   * TRUE ONLY for --model=engine.
+   *
+   * The stub and the P3 judge wrapper are eval-engineering artifacts: they do
+   * not measure the product. Only P2's engine does, so only that run's number
+   * may be quoted as AgentGate's score.
+   */
+  isProductNumber: boolean;
   scenarioCount: number;
   scenarioHash: string;
+  /** How many scenarios actually produced a decision, and why the rest did not. */
+  counts: SuiteResult['counts'];
+  retries: number;
   metrics: Metrics;
   byCategory: Record<string, Metrics>;
   latency: SuiteResult['latency'];
@@ -91,6 +135,8 @@ export type SuiteReport = {
     expected: Decision;
     predicted: Decision;
     correct: boolean;
+    status: string;
+    error?: string;
     riskScore: number;
     violatedPolicy?: string;
     reasoning: string;
@@ -98,9 +144,15 @@ export type SuiteReport = {
   }>;
 };
 
+/** The one condition under which a number may be called AgentGate's score. */
+export function isProductNumber(modelName: string): boolean {
+  return modelName === 'engine';
+}
+
 export function buildReport(params: {
   suite: SuiteResult;
   engine: string;
+  modelName: string;
   scenarioHash: string;
 }): SuiteReport {
   const { suite } = params;
@@ -108,9 +160,14 @@ export function buildReport(params: {
   return {
     generatedAt: new Date().toISOString(),
     model: suite.label,
+    provider: suite.provider,
+    modelId: suite.modelId,
     engine: params.engine,
+    isProductNumber: isProductNumber(params.modelName),
     scenarioCount: suite.rows.length,
     scenarioHash: params.scenarioHash,
+    counts: suite.counts,
+    retries: suite.retries,
     metrics,
     byCategory: Object.fromEntries(byCategory(suite.rows)),
     latency: suite.latency,
@@ -122,6 +179,8 @@ export function buildReport(params: {
       expected: r.scenario.expected,
       predicted: r.predicted,
       correct: r.correct,
+      status: r.status,
+      error: r.error,
       riskScore: r.result.riskScore,
       violatedPolicy: r.result.violatedPolicy,
       reasoning: r.result.reasoning,

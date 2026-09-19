@@ -7,17 +7,46 @@ import {
   type EvaluateLike,
 } from '@agentgate/observability';
 import { materialise, type Scenario } from './scenarios.js';
+import { JudgeInvalidOutput, JudgeUnavailable } from './models/errors.js';
+
+/**
+ * scored  — the judge returned a conforming decision; counts towards metrics.
+ * invalid — output did not conform to the requested schema (a plumbing failure).
+ * skipped — the request never resolved after retries (rate limit / timeout).
+ * errored — anything else the evaluator threw.
+ *
+ * Only `scored` rows reach the metrics. Bucketing a schema or quota failure as a
+ * wrong decision would make a provider look worse than it actually judged.
+ */
+export type RowStatus = 'scored' | 'invalid' | 'skipped' | 'errored';
 
 export type Row = {
   scenario: Scenario;
   result: EvalResult;
   predicted: Decision;
   correct: boolean;
+  status: RowStatus;
+  error?: string;
 };
 
 export type Latency = { meanMs: number; p50Ms: number; p95Ms: number; maxMs: number };
 
-export type SuiteResult = { label: string; rows: Row[]; latency: Latency };
+export type SuiteCounts = Record<RowStatus, number>;
+
+export type SuiteResult = {
+  label: string;
+  provider?: string;
+  modelId?: string;
+  rows: Row[];
+  latency: Latency;
+  counts: SuiteCounts;
+  retries: number;
+};
+
+/** Rows that actually produced a decision. Everything downstream uses this. */
+export function scoredRows(rows: Row[]): Row[] {
+  return rows.filter((r) => r.status === 'scored');
+}
 
 function summariseLatency(values: number[]): Latency {
   const sorted = [...values].sort((a, b) => a - b);
@@ -40,6 +69,9 @@ export async function scoreSuite(params: {
   evaluate: EvaluateLike;
   scenarios: Scenario[];
   path?: DecisionPath;
+  provider?: string;
+  modelId?: string;
+  retries?: () => number;
   metadata?: Record<string, unknown>;
 }): Promise<SuiteResult> {
   const evaluate = instrumentGate(params.evaluate, params.path ?? 'rule');
@@ -59,35 +91,70 @@ export async function scoreSuite(params: {
         const { action, context } = materialise(scenario);
         const startedAt = performance.now();
         let result: EvalResult;
+        let status: RowStatus = 'scored';
+        let error: string | undefined;
+
         try {
           result = await evaluate(action, context);
         } catch (err) {
-          // A throwing engine is a failure, not a crash -- score it and keep going.
-          captureError(err, { scenarioId: scenario.id, toolName: scenario.toolName });
+          // A failing evaluator is a data point, not a crash -- bucket it and
+          // keep going, but keep it out of the decision metrics.
+          status =
+            err instanceof JudgeInvalidOutput
+              ? 'invalid'
+              : err instanceof JudgeUnavailable
+                ? 'skipped'
+                : 'errored';
+          error = (err as Error).message;
+          if (status === 'errored') {
+            captureError(err, { scenarioId: scenario.id, toolName: scenario.toolName });
+          }
           result = {
             riskScore: -1,
             decision: 'allow',
-            reasoning: `evaluate() threw: ${(err as Error).message}`,
+            reasoning: `${status}: ${error}`,
             latencyMs: Math.round(performance.now() - startedAt),
           };
         }
 
-        latencies.push(result.latencyMs ?? Math.round(performance.now() - startedAt));
-        const correct = result.decision === scenario.expected;
+        if (status === 'scored') {
+          latencies.push(result.latencyMs ?? Math.round(performance.now() - startedAt));
+        }
+        const correct = status === 'scored' && result.decision === scenario.expected;
 
         // Scoring the trace is what makes it self-evaluating in LangFuse.
-        run.step(action, result, undefined, {
-          scenarioId: scenario.id,
-          expected: scenario.expected,
-          correct,
-        });
+        // Unscored rows carry no correctness signal, so they get no score.
+        run.step(
+          action,
+          result,
+          undefined,
+          status === 'scored'
+            ? { scenarioId: scenario.id, expected: scenario.expected, correct }
+            : undefined,
+        );
 
-        rows.push({ scenario, result, predicted: result.decision, correct });
+        rows.push({ scenario, result, predicted: result.decision, correct, status, error });
       }
 
-      run.end({ scored: rows.length, correct: rows.filter((r) => r.correct).length });
+      run.end({
+        scored: scoredRows(rows).length,
+        correct: rows.filter((r) => r.correct).length,
+        invalid: rows.filter((r) => r.status === 'invalid').length,
+        skipped: rows.filter((r) => r.status === 'skipped').length,
+      });
     },
   );
 
-  return { label: params.label, rows, latency: summariseLatency(latencies) };
+  const counts: SuiteCounts = { scored: 0, invalid: 0, skipped: 0, errored: 0 };
+  for (const r of rows) counts[r.status]++;
+
+  return {
+    label: params.label,
+    provider: params.provider,
+    modelId: params.modelId,
+    rows,
+    latency: summariseLatency(latencies),
+    counts,
+    retries: params.retries?.() ?? 0,
+  };
 }

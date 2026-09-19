@@ -10,7 +10,15 @@ import {
 } from '@agentgate/observability';
 import { loadScenarios } from './scenarios.js';
 import { scoreSuite, type SuiteResult } from './score.js';
-import { buildReport, byCategory, metricsFor, printFailures, printMetrics } from './report.js';
+import {
+  buildReport,
+  byCategory,
+  isProductNumber,
+  metricsFor,
+  printBuckets,
+  printFailures,
+  printMetrics,
+} from './report.js';
 import { buildByModelReport, printComparison } from './compare.js';
 import { parseModelNames, resolveModel, type ModelName } from './models/registry.js';
 import { buildRunDoc, historyEnabled, recordRun } from './history.js';
@@ -81,6 +89,7 @@ async function main() {
 
   const requested = parseModelNames(opt('model'));
   const suites: SuiteResult[] = [];
+  const scoredNames: ModelName[] = [];
   const skipped: Array<{ name: ModelName; reason: string }> = [];
 
   console.log(
@@ -107,9 +116,13 @@ async function main() {
         evaluate: outcome.model.evaluate,
         scenarios: selected,
         path: outcome.model.path,
+        provider: outcome.model.provider,
+        modelId: outcome.model.modelId,
+        retries: outcome.model.retries,
         metadata: { model: outcome.model.label, category: only ?? 'all' },
       }),
     );
+    scoredNames.push(name);
   }
 
   if (suites.length === 0) {
@@ -122,8 +135,10 @@ async function main() {
   // The first successfully scored model is the primary one: it owns report.json
   // and it is what the regression check runs against.
   const primary = suites[0]!;
+  const primaryName = scoredNames[0]!;
   const metrics = metricsFor(primary.rows);
 
+  printBuckets(primary);
   printMetrics(metrics, byCategory(primary.rows));
   printFailures(primary.rows, Number(opt('show-failures') ?? 15));
 
@@ -155,7 +170,12 @@ async function main() {
     thresholds,
   });
 
-  const report = buildReport({ suite: primary, engine: primary.label, scenarioHash });
+  const report = buildReport({
+    suite: primary,
+    engine: primary.label,
+    modelName: primaryName,
+    scenarioHash,
+  });
 
   // A failing run must not become the next run's baseline, or one bad commit
   // silently resets the bar. Keep report.json as the last good run and park the
@@ -167,6 +187,23 @@ async function main() {
   console.log(`\nWrote ${path.relative(process.cwd(), outPath)}`);
 
   printRegression(regression, thresholds);
+
+  // Task 3 guard: only --model=engine measures the product.
+  if (!isProductNumber(primaryName)) {
+    console.log(
+      [
+        '',
+        '  ' + '!'.repeat(64),
+        '  !! NOT A PRODUCT NUMBER',
+        `  !! This run scored "${primary.modelId ?? primary.label}", not AgentGate.`,
+        '  !! The stub and the P3 judge wrapper are eval-engineering artifacts.',
+        '  !! Only --model=engine measures the product. Do not quote this on stage.',
+        '  ' + '!'.repeat(64),
+      ].join('\n'),
+    );
+  } else {
+    console.log('\n  This IS the product number (--model=engine).');
+  }
 
   if (keepBaseline && baseline) {
     console.log(

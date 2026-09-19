@@ -12,6 +12,12 @@ import {
   JUDGE_SYSTEM_PROMPT,
   type JudgeOutput,
 } from './prompt.js';
+import {
+  DEFAULT_RETRY,
+  JudgeInvalidOutput,
+  withRetry,
+  type RetryOptions,
+} from './errors.js';
 
 /**
  * A thin, P3-owned LLM judge used only for the model comparison.
@@ -27,6 +33,9 @@ export type JudgeConfig = {
   provider: Provider;
   /** Exact model id; the caller resolves it from env or a flag. */
   model: string;
+  retry?: RetryOptions;
+  /** Called when a request is retried, so the harness can report the reason. */
+  onRetry?: (attempt: number, delayMs: number, err: unknown) => void;
 };
 
 export type Judge = (action: AgentAction, context: SessionContext) => Promise<EvalResult>;
@@ -50,31 +59,81 @@ function toEvalResult(raw: JudgeOutput, latencyMs: number): EvalResult {
   };
 }
 
+const DECISIONS = new Set(['allow', 'escalate', 'block']);
+
+/**
+ * Validates the provider's output against the contract we asked for.
+ *
+ * Anything that fails here is a schema-conformance problem, not a judgement
+ * problem, so it is raised as JudgeInvalidOutput and bucketed separately.
+ */
 function parseJudgeOutput(text: string | undefined): JudgeOutput {
-  if (!text) throw new Error('judge returned an empty response');
-  return JSON.parse(text) as JudgeOutput;
+  if (!text || !text.trim()) {
+    throw new JudgeInvalidOutput('provider returned an empty response', text);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new JudgeInvalidOutput('provider returned text that is not valid JSON', text);
+  }
+
+  if (typeof parsed !== 'object' || parsed === null) {
+    throw new JudgeInvalidOutput('provider returned JSON that is not an object', text);
+  }
+
+  const o = parsed as Record<string, unknown>;
+  if (typeof o.riskScore !== 'number' || !Number.isFinite(o.riskScore)) {
+    throw new JudgeInvalidOutput('riskScore missing or not a number', text);
+  }
+  if (typeof o.decision !== 'string' || !DECISIONS.has(o.decision)) {
+    throw new JudgeInvalidOutput(`decision missing or not one of allow/escalate/block`, text);
+  }
+  if (typeof o.reasoning !== 'string') {
+    throw new JudgeInvalidOutput('reasoning missing or not a string', text);
+  }
+
+  return {
+    riskScore: o.riskScore,
+    decision: o.decision as JudgeOutput['decision'],
+    reasoning: o.reasoning,
+    violatedPolicy: typeof o.violatedPolicy === 'string' ? o.violatedPolicy : 'none',
+  };
 }
 
-function openaiJudge(model: string): Judge {
+function openaiJudge(config: JudgeConfig): Judge {
   // OPENAI_BASE_URL lets the verifier point this at a local mock.
-  const client = new OpenAI({ baseURL: process.env.OPENAI_BASE_URL });
+  //
+  // maxRetries: 0 is deliberate. The OpenAI SDK retries twice by default, which
+  // would compound with our own policy into up to 8 requests per scenario and
+  // make quota use unpredictable. One bounded retry policy, applied here.
+  const client = new OpenAI({ baseURL: process.env.OPENAI_BASE_URL, maxRetries: 0 });
+  const retry = { ...(config.retry ?? DEFAULT_RETRY), onRetry: config.onRetry };
+
   return async (action, context) => {
     const startedAt = performance.now();
-    const res = await client.chat.completions.create({
-      model,
-      messages: [
-        { role: 'system', content: JUDGE_SYSTEM_PROMPT },
-        { role: 'user', content: buildJudgeInput(action, context) },
-      ],
-      response_format: {
-        type: 'json_schema',
-        json_schema: {
-          name: 'agentgate_decision',
-          strict: true,
-          schema: { ...JUDGE_SCHEMA, additionalProperties: false },
-        },
-      },
-    });
+    // Only the network call is retried; a schema failure is deterministic and
+    // retrying it just burns quota.
+    const res = await withRetry(
+      () =>
+        client.chat.completions.create({
+          model: config.model,
+          messages: [
+            { role: 'system', content: JUDGE_SYSTEM_PROMPT },
+            { role: 'user', content: buildJudgeInput(action, context) },
+          ],
+          response_format: {
+            type: 'json_schema',
+            json_schema: {
+              name: 'agentgate_decision',
+              strict: true,
+              schema: { ...JUDGE_SCHEMA, additionalProperties: false },
+            },
+          },
+        }),
+      retry,
+    );
     return toEvalResult(
       parseJudgeOutput(res.choices[0]?.message?.content ?? undefined),
       Math.round(performance.now() - startedAt),
@@ -82,7 +141,7 @@ function openaiJudge(model: string): Judge {
   };
 }
 
-function geminiJudge(model: string): Judge {
+function geminiJudge(config: JudgeConfig): Judge {
   const client = new GoogleGenAI({
     apiKey: process.env.GEMINI_API_KEY,
     // GEMINI_BASE_URL lets the verifier point this at a local mock.
@@ -90,19 +149,25 @@ function geminiJudge(model: string): Judge {
       ? { httpOptions: { baseUrl: process.env.GEMINI_BASE_URL } }
       : {}),
   });
+  const retry = { ...(config.retry ?? DEFAULT_RETRY), onRetry: config.onRetry };
+
   return async (action, context) => {
     const startedAt = performance.now();
-    const res = await client.models.generateContent({
-      model,
-      contents: buildJudgeInput(action, context),
-      config: {
-        systemInstruction: JUDGE_SYSTEM_PROMPT,
-        responseMimeType: 'application/json',
-        // Gemini's own structured-output mechanism, so neither provider is
-        // being asked to hold the format together with prompt text alone.
-        responseSchema: JUDGE_SCHEMA as unknown as Record<string, unknown>,
-      },
-    });
+    const res = await withRetry(
+      () =>
+        client.models.generateContent({
+          model: config.model,
+          contents: buildJudgeInput(action, context),
+          config: {
+            systemInstruction: JUDGE_SYSTEM_PROMPT,
+            responseMimeType: 'application/json',
+            // Gemini's own structured-output mechanism, so neither provider is
+            // being asked to hold the format together with prompt text alone.
+            responseSchema: JUDGE_SCHEMA as unknown as Record<string, unknown>,
+          },
+        }),
+      retry,
+    );
     return toEvalResult(
       parseJudgeOutput(res.text),
       Math.round(performance.now() - startedAt),
@@ -111,9 +176,7 @@ function geminiJudge(model: string): Judge {
 }
 
 export function createJudge(config: JudgeConfig): Judge {
-  return config.provider === 'openai'
-    ? openaiJudge(config.model)
-    : geminiJudge(config.model);
+  return config.provider === 'openai' ? openaiJudge(config) : geminiJudge(config);
 }
 
 /** Which env var holds each provider's key. */
