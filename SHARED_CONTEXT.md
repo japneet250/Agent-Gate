@@ -324,27 +324,56 @@ Both processes currently PASS (demo-agents: 4 spans / 3 logs; evals: 30 spans /
 - Sentry and LangFuse are transport-verified against a local collector
   (`npm run verify`) but **not** against the real backends, for the same reason.
 
-### Blocked on P2 — the re-baseline run
+### RE-BASELINE DONE — the first real product number
 
-Every baseline in `report.json` so far is the **stub**, and every model number is
-the **P3 judge wrapper**. Both are superseded the moment P2's engine lands.
-
-The moment `@agentgate/engine` exports `evaluate`, run exactly this:
+P2's engine landed and was merged into `person3`. **It is a Python + FastAPI
+service, not an npm package**, so the old `import('@agentgate/engine')` swap
+could never have worked; the harness now calls it over HTTP. Ran:
 
 ```bash
 npm run eval -w @agentgate/evals -- --model=engine --update-baseline
 ```
 
-That resets the regression baseline against the real engine and is **the only
-run whose number may be quoted as AgentGate's score**. Checked just now:
-`packages/engine` does not exist yet, and `--model=engine` correctly refuses to
-run rather than silently scoring the stub under the engine's name.
+**AgentGate scored 71.0% accuracy, macro-F1 0.584** over all 100 scenarios,
+100/100 scored, **zero degraded evaluations**, `isProductNumber: true`.
+Engine at full strength (`retrieval: hybrid`, judge `gpt-4o`).
+Latency mean 1986ms / p50 1856ms / p95 2913ms.
+
+| class | precision | recall | F1 |
+| --- | --- | --- | --- |
+| allow | 94.3% | 78.6% | 0.857 |
+| escalate | 66.7% | **9.1%** | 0.160 |
+| block | 58.1% | **100.0%** | 0.735 |
+
+**Read this before reacting to the number.** It is below the stub's 91%, but the
+two are not measuring the same thing, and the gap is mostly one disagreement:
+
+- **26 of 29 mismatches are over-blocking** (18 escalate->block, 8 allow->block).
+  Only 2 are under-blocking. **Block recall is 100% — the engine never let a
+  dangerous action through.** For a security product that is the safe direction
+  to be wrong in.
+- **16 of 29 mismatches cite the engine's `$500` single-transaction limit.**
+  P3's scenarios were labelled against a **$10,000** human-approval threshold.
+  Reconciling that one number alone takes accuracy to **87.0%**.
+- **escalate recall 9.1%** is the real finding: the engine blocks where we
+  expect escalate. 17 of 20 ambiguous scenarios came back `block`.
+
+**P2 — this is a calibration disagreement, not a bug, and it is the most
+important thing to settle before the demo.** Either the policy corpus adopts
+$10,000, or P3's scenario labels adopt $500 — but we cannot ship a demo where
+"buy $4,200 of laptops" is blocked while the script calls it routine. P3 will
+not relabel scenarios to flatter the number; that decision is the team's.
+
+The regression gate **failed** this run on its floors (macro-F1 0.584 < 0.8,
+escalate recall 9.1% < 0.7). That is the gate doing its job. `--update-baseline`
+was passed deliberately, so this is now the baseline everything is measured from.
 
 ### Next up
 
 Done: mock servers, demo agents, eval harness, Sentry (errors + tracing + logs),
 LangFuse (tracing + scores), dual-model comparison + live-hardening, regression
-mode, Mongo history, version pins, product-number guard.
+mode, Mongo history, version pins, product-number guard, **P2 engine integration
+over HTTP, and the first product number**.
 Stretch, not started: CSE Log & Order, GPTZero, DeepEval, RAGAS.
 
 ---
@@ -372,3 +401,11 @@ _Append-only. Format: `- [HH:MM] (Px) <what changed / decided / impact>`_
 - [10:33] (P3) **Live backend verification NOT done — there is no `.env` in the repo** and no Sentry/Gemini/LangFuse vars are exported, so I could not run against the real backends. Everything remains transport-verified against local collectors only; I have deliberately not reported mock results as live. Blocked on keys.
 - [10:40] (P3) Added `CLAUDE.md` (orientation) and `P3_STATUS.md` (P3 detail, on `person3`). **Moved the Node/SDK version pins onto `main`** — they had landed on `person3` only, so P1/P2 pulling `main` never saw them. `npm run doctor` now works from `main`.
 - [10:34] (P3) **Engine re-baseline queued, blocked on P2.** `packages/engine` does not exist yet. The moment it exports `evaluate`: `npm run eval -w @agentgate/evals -- --model=engine --update-baseline`. All prior baselines are stub / P3-judge and are superseded by that run.
+- [17:55] (P3) **Merged P2's `person2/engine` into `person3`** (unrelated histories — their branch was cut from the empty GitHub `main` and never saw our bootstrap). P2's engine is **Python + FastAPI**, so `@agentgate/engine` is not importable: the harness now calls `POST /evaluate` over HTTP. P1 — your gateway needs the same, see `packages/engine/INTEGRATION.md`.
+- [17:56] (P3) **`SessionContext` resolved by P2:** `cumulative` is gone (the engine owns session state), `recentActions` is optional, `agentId` added. `AgentAction.timestamp` differs — ours `number`, theirs `datetime` — so P3 serialises ISO on the wire rather than trusting pydantic's seconds-vs-ms heuristic. Two contracts now coexist: `packages/shared-types` (ours) and `packages/shared` (P2's). **They should be merged into one; flagging, not deciding.**
+- [17:57] (P3) **`evaluate(action, context, opts?: {model})` — REJECTED by P2**, model comes from `AGENTGATE_JUDGE_MODEL` instead. So the model comparison stays in P3's judge wrapper; it is not redundant, since an env var cannot vary within a run.
+- [17:58] (P3) **P2 — cumulative spend double-counts.** `pattern_detector.py` books spend on *any* allowed financial action, so `create_purchase_order($4200)` + `approve_payment($4200)` books **$8400** against the $5000 limit. P3 agreed (05:53) to book on `approve_payment` only for exactly this reason. The procurement demo will trip the cumulative alert at half the intended spend and **look correct on stage**. P2's call to fix.
+- [17:59] (P3) **P3 bug fixed: the repo-root `.env` was never loaded.** `import 'dotenv/config'` resolves against `process.cwd()`, and npm workspace scripts run with cwd = the package dir — so every key was invisible and the harness reported "SENTRY_DSN not set" for a DSN that authenticates fine. Now loaded via `@agentgate/observability/load-env`. **P1/P2: if you add a TS entrypoint, import that first.**
+- [18:00] (P3) **Live backend verification DONE for Sentry** — ingest returns HTTP 200 with an event id, 26 block events and 31 `agentgate.evaluate` spans emitted over the dangerous set. **LangFuse NOT verified: the keys were removed from `.env` mid-session.** Dashboard confirmation is the user's, not mine.
+- [18:01] (P3) **`gemini-2.5-flash` is retired for new API keys** (404, "no longer available to new users"). Judge moved to `gemini-3.6-flash`. Free-tier RPM is severe: 20 of 30 scenarios rate-limited, bucketed `skipped`, never counted as wrong. **The OpenAI-vs-Gemini comparison rests on 4 jointly scored scenarios and is too thin to quote.**
+- [18:02] (P3) **RE-BASELINE DONE — AgentGate scores 71.0% accuracy / macro-F1 0.584**, 100/100 scored, zero degraded, `isProductNumber: true`. **All prior baselines (stub 91%, P3 judge wrapper) are superseded.** Block recall 100%, escalate recall 9.1%; 16 of 29 mismatches are the engine's $500 vs our $10,000 threshold, worth 87.0% if reconciled. **P2 — that threshold is the one decision to make before the demo.**
