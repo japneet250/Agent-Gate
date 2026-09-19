@@ -142,6 +142,6 @@ export async function evaluateStub(
     decision: decisionForRiskScore(riskScore),
     reasoning: top?.reason ?? 'No policy matched; routine action.',
     violatedPolicy: top?.policy,
-    latencyMs: Math.round(performance.now() - startedAt),
+    latencyMs: Number((performance.now() - startedAt).toFixed(3)),
   };
 }
