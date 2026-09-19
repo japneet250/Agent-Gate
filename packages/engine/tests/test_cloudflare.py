@@ -123,15 +123,15 @@ class TestD1SessionStore:
         store._client = transport(handler)
 
         fresh = await store.get("s-1")
-        assert fresh.total_spend == 0
+        assert fresh.counters == {}
 
-        fresh.total_spend = 4800.0
+        fresh.counters["spending-limit-cumulative"] = 4800.0
         fresh.action_counts = {"approve_payment": 12}
         await store.save(fresh)
 
         again = await store.get("s-1")
         assert isinstance(again, SessionState)
-        assert again.total_spend == 4800.0
+        assert again.counters["spending-limit-cumulative"] == 4800.0
         assert again.action_counts == {"approve_payment": 12}
         assert store.degraded is False
 

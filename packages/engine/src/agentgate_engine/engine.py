@@ -66,12 +66,15 @@ async def evaluate_detailed(
 
     try:
         session = await session_store().get(session_id)
+        from .nodes.pattern_detector import cumulative_policies
+
         session_facts = SessionFacts(
             actions_this_session=sum(session.action_counts.values()),
-            total_spend=session.total_spend,
-            data_access_count=session.data_access_count,
-            permission_requests=session.permission_requests,
-            spend_limit=config.session_spend_limit,
+            counters={
+                p.name: p.limit.format_total(session.counters.get(p.id, 0.0))
+                for p in cumulative_policies()
+                if p.limit is not None and session.counters.get(p.id)
+            },
         )
 
         # The gateway may pass session history itself. When it does not, fall back

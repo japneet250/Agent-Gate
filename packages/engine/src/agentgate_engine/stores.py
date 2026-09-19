@@ -36,10 +36,10 @@ class SessionState:
     """Per-session counters the Pattern Detector accumulates across actions."""
 
     session_id: str
-    total_spend: float = 0.0
+    # One running total per cumulative policy, keyed by policy id. Generic on
+    # purpose: what gets counted is declared by the policy, not by this code.
+    counters: dict[str, float] = field(default_factory=dict)
     action_counts: dict[str, int] = field(default_factory=dict)
-    data_access_count: int = 0
-    permission_requests: int = 0
     last_actions: list[dict[str, Any]] = field(default_factory=list)
     # Trimmed history so the judge sees the session even when the caller passes none.
     recent_actions: list[dict[str, Any]] = field(default_factory=list)

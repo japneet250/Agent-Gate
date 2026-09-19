@@ -53,6 +53,59 @@ classifier → policy_retriever → risk_judge → decision_gate → pattern_det
 | `decision_gate` | `<30` allow · `30–69` escalate · `≥70` block | none |
 | `pattern_detector` | cumulative spend, repeat loops, bulk reads, privilege creep | none |
 
+### Cumulative limits are policy, not code
+
+AgentGate is a firewall for **any** enterprise, so what it counts cannot be baked
+into Python. A bank counts spend; a hospital counts patient records; a SaaS
+company counts exported rows. A policy declares its own rule:
+
+```markdown
+# Cumulative Spending Limit
+Splitting a large purchase into smaller ones to evade an approval limit is
+approval-threshold splitting.
+Severity: critical
+Applies to: financial
+Enforced by: pattern_detector
+Accumulate: sum(toolArgs.amount)
+Scope: session
+Limit: $5,000
+When exceeded: escalate
+Risk floor: 75
+```
+
+The pattern detector is a generic accumulator over whatever policies declare one.
+Adding a dimension means writing a markdown file:
+
+```markdown
+# PHI Access Volume            |  # Bulk Export Row Volume
+Applies to: data_access        |  Applies to: data_access
+Accumulate: count()            |  Accumulate: sum(toolArgs.rowCount)
+Limit: 5                       |  Limit: 100000
+When exceeded: escalate        |  When exceeded: escalate
+```
+
+| Field | Meaning |
+| --- | --- |
+| `Accumulate:` | `count()` or `sum(toolArgs.<field>)` — deliberately not a query language |
+| `Applies to:` | which action categories the limit sees |
+| `Match:` | optional regex on the tool name, for a family of tools inside a category |
+| `Scope:` | `session` (per-agent and per-day need durable storage; they raise rather than pretend) |
+| `Limit:` | the threshold; a leading `$` formats totals as currency |
+| `When exceeded:` | `escalate` or `block` |
+| `Risk floor:` | the minimum risk score to force when it trips |
+
+`POST /policies/reload` re-reads the directory without dropping session counters,
+so an operator edits a file and the control is live. A malformed limit **raises**
+rather than being ignored — silently disabling a control the operator believes is
+on would be worse than failing to start.
+
+Examples that are not loaded by default live in `policies/examples/`.
+
+**Loop detection stays built in** and is not policy-defined, because it protects
+the firewall itself rather than enforcing a business rule: an agent repeating one
+identical call is looping or under prompt injection, and that is true for every
+customer.
+
 ### Three design decisions worth knowing
 
 **The pattern detector can only make a decision stricter.** It never turns a block into an

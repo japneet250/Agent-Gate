@@ -7,6 +7,8 @@ from typing import Any, TypedDict
 
 from agentgate_shared import ActionCategory, AgentAction, Decision, SessionContext
 
+from .limits import LimitSpec
+
 
 @dataclass
 class RetrievedPolicy:
@@ -22,6 +24,9 @@ class RetrievedPolicy:
     # detector, which holds exact counts; showing them to the judge invites it to
     # guess at a threshold it cannot see, which makes its decisions nondeterministic.
     enforced_by: str = "judge"
+    # Present when the policy declares a cumulative rule (Accumulate/Limit).
+    # The pattern detector enforces these; the judge never sees them.
+    limit: LimitSpec | None = None
     enabled: bool = True
     score: float = 0.0
     dense_score: float = 0.0
@@ -45,13 +50,17 @@ class GuardrailEvent:
 
 @dataclass
 class SessionFacts:
-    """Deterministic session totals, so the judge reasons with numbers not guesses."""
+    """Deterministic session totals, so the judge reasons with numbers not guesses.
+
+    Generic on purpose: what has been counted is decided by the policies, not by
+    this class. Limits are deliberately NOT carried here — telling the judge the
+    threshold makes it escalate on totals that are merely "approaching" it, which
+    is the pattern detector's job and made decisions nondeterministic.
+    """
 
     actions_this_session: int = 0
-    total_spend: float = 0.0
-    data_access_count: int = 0
-    permission_requests: int = 0
-    spend_limit: float = 0.0
+    # Policy name -> formatted running total, e.g. "Cumulative Spending Limit" -> "$4,800".
+    counters: dict[str, str] = field(default_factory=dict)
 
 
 class GraphState(TypedDict, total=False):

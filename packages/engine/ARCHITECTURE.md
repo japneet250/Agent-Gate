@@ -95,7 +95,7 @@ flowchart TD
 | `policy_retriever` | finds the 5 relevant policies | embeddings | no — supplies evidence |
 | `risk_judge` | scores 0–100 + reasoning | gpt-4o | yes — sets the score |
 | `decision_gate` | score → decision | none | yes — pure thresholds |
-| `pattern_detector` | cumulative checks | none | **only stricter, never looser** |
+| `pattern_detector` | policy-declared cumulative limits | none | **only stricter, never looser** |
 
 ---
 
@@ -162,6 +162,12 @@ flowchart LR
     FILTER -->|judge| TOJ["→ risk_judge"]
     FILTER -->|pattern_detector| HIDE["hidden from judge"]
 ```
+
+**Cumulative limits are declared by policies, not hardcoded.** The detector is a
+generic accumulator: a policy supplies `Accumulate:` (`count()` or
+`sum(toolArgs.<field>)`), `Limit:`, and `When exceeded:`. Money is one expression
+among many — a hospital counts patient records with the same machinery, by adding
+a markdown file. See the engine README for the field reference.
 
 **Why cumulative policies are hidden from the judge.** Shown the *Cumulative Spending Limit*
 policy, the judge sees a total "approaching" a threshold it can only guess at and escalates

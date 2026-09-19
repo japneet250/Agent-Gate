@@ -122,16 +122,12 @@ def build_prompt(state: GraphState) -> str:
         or "(no policies retrieved)"
     )
 
+    # Generic: whatever the policies count, named by policy. Limits are
+    # deliberately absent — naming the threshold gives the judge something to
+    # anticipate and it starts escalating on totals "approaching" it.
+    counter_lines = [f"{name}: {total} so far" for name, total in facts.counters.items()]
     totals = "\n".join(
-        [
-            f"actions so far this session: {facts.actions_this_session}",
-            # Deliberately NOT showing the session spend limit. The judge is told not to
-            # enforce cumulative limits; naming the threshold gives it something to
-            # anticipate, and it starts escalating on totals "approaching" the limit.
-            f"total spend approved so far: ${facts.total_spend:,.0f}",
-            f"data reads so far: {facts.data_access_count}",
-            f"permission-related calls so far: {facts.permission_requests}",
-        ]
+        [f"actions so far this session: {facts.actions_this_session}", *counter_lines]
     )
 
     return "\n".join(

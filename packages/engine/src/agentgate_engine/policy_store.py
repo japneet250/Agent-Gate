@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import config
+from .limits import LimitSpecError, parse_limit_spec
 from .llm import Usage, guarded_call, openai_client, usage_of
 from .state import RetrievedPolicy
 from .stores import VectorRecord, vector_store
@@ -44,14 +45,27 @@ def _parse_policy(filename: str, raw: str) -> RetrievedPolicy:
     applies = re.search(r"^Applies to:\s*(.+)$", raw, re.M | re.I)
     applies_to = [s.strip() for s in applies.group(1).split(",")] if applies else []
 
+    declares_limit = re.search(r"^Accumulate:", raw, re.M | re.I) is not None
     enforced_by = (
         "pattern_detector"
-        if re.search(r"^Enforced by:\s*pattern_detector\s*$", raw, re.M | re.I)
+        if declares_limit
+        or re.search(r"^Enforced by:\s*pattern_detector\s*$", raw, re.M | re.I)
         else "judge"
     )
 
+    try:
+        limit = parse_limit_spec(raw)
+    except LimitSpecError as err:
+        # A malformed limit must not silently become "no limit" — that would
+        # disable a control the operator believes is on.
+        raise LimitSpecError(f"{filename}: {err}") from err
+
     description = raw
-    for pattern in (r"^#.+$", r"^Severity:.+$", r"^Applies to:.+$", r"^Enforced by:.+$"):
+    for pattern in (
+        r"^#.+$", r"^Severity:.+$", r"^Applies to:.+$", r"^Enforced by:.+$",
+        r"^Accumulate:.+$", r"^Scope:.+$", r"^Limit:.+$", r"^When exceeded:.+$",
+        r"^Risk floor:.+$", r"^Match:.+$",
+    ):
         description = re.sub(pattern, "", description, count=1, flags=re.M | re.I)
 
     return RetrievedPolicy(
@@ -62,6 +76,7 @@ def _parse_policy(filename: str, raw: str) -> RetrievedPolicy:
         severity=severity,
         applies_to=applies_to,
         enforced_by=enforced_by,
+        limit=limit,
     )
 
 

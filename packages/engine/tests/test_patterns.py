@@ -41,7 +41,7 @@ class TestCumulativeSpend:
 
         flagged = results[12]
         assert flagged.result.decision == "escalate"
-        assert "Cumulative spend alert" in flagged.result.reasoning
+        assert "Cumulative Spending Limit:" in flagged.result.reasoning
         assert "approval-threshold splitting" in flagged.result.reasoning
         assert flagged.result.violated_policy == "Cumulative Spending Limit"
         assert flagged.result.risk_score >= 75
@@ -60,8 +60,8 @@ class TestCumulativeSpend:
         for i in range(1, 21):
             await evaluate_detailed(po(i))
         r = await evaluate_detailed(po(99))
-        # Everything was blocked, so nothing was ever spent — no cumulative alert.
-        assert "Cumulative spend alert" not in r.result.reasoning
+        # Everything was blocked, so nothing was ever counted — no cumulative alert.
+        assert "Cumulative Spending Limit:" not in r.result.reasoning
 
 
 class TestLoopDetection:
@@ -89,11 +89,11 @@ class TestPrivilegeEscalation:
     async def test_escalates_after_repeated_permission_calls(self, harness):
         harness()
         flagged = None
-        for i in range(1, config.permission_request_limit + 1):
+        for i in range(1, 4):
             flagged = await evaluate_detailed(
                 make_action("grant_role", {"role": f"role-{i}"}, "priv-session")
             )
-        assert "Privilege escalation alert" in flagged.result.reasoning
+        assert "Privilege Escalation:" in flagged.result.reasoning
         assert flagged.result.decision != "allow"
 
 
@@ -138,3 +138,81 @@ class TestConsistencyGuardrail:
             "a different email must not inherit the dangerous score"
         )
         assert benign.result.decision == "allow"
+
+
+class TestPolicyDefinedLimits:
+    """The product claim: an enterprise adds a NEW cumulative dimension by
+    writing a policy file, with no change to engine code."""
+
+    HEALTHCARE = (
+        "phi-access-volume.md",
+        """# PHI Access Volume
+An agent reading an unusual number of patient records in one session is a
+possible bulk-extraction attempt, even when each individual read is authorised.
+Severity: critical
+Applies to: data_access
+Enforced by: pattern_detector
+Accumulate: count()
+Scope: session
+Limit: 3
+When exceeded: escalate
+Risk floor: 80
+""",
+    )
+
+    async def test_a_brand_new_dimension_is_enforced_with_no_code_change(self, harness):
+        from agentgate_engine.policy_store import set_policies
+
+        harness()
+        # A policy set this engine has never seen: healthcare, counting records,
+        # nothing to do with money.
+        set_policies([self.HEALTHCARE])
+
+        results = []
+        for i in range(1, 6):
+            results.append(
+                await evaluate_detailed(
+                    make_action("lookup_patient", {"mrn": f"MRN-{i}"}, "phi-session")
+                )
+            )
+
+        assert all(r.result.decision == "allow" for r in results[:3]), (
+            "the first three reads are within the declared limit"
+        )
+        flagged = results[3]
+        assert flagged.result.decision == "escalate"
+        assert flagged.result.violated_policy == "PHI Access Volume"
+        assert flagged.result.risk_score >= 80, "the policy's declared risk floor is honoured"
+        assert "exceeds the limit of 3" in flagged.result.reasoning
+
+    async def test_a_limit_only_counts_the_categories_it_declares(self, harness):
+        from agentgate_engine.policy_store import set_policies
+
+        harness()
+        set_policies([self.HEALTHCARE])
+
+        # Financial actions must not advance a data_access counter.
+        for i in range(1, 6):
+            r = await evaluate_detailed(
+                make_action("approve_payment", {"amount": 10, "vendor": f"V{i}"}, "mixed-session")
+            )
+        assert "PHI Access Volume" not in (r.result.violated_policy or ""), (
+            "a payment must not count toward a patient-record limit"
+        )
+
+    async def test_a_malformed_limit_fails_loudly_rather_than_silently_disabling(self):
+        from agentgate_engine.limits import LimitSpecError
+        from agentgate_engine.policy_store import set_policies
+
+        broken = (
+            "broken.md",
+            "# Broken\nSeverity: high\nApplies to: other\n"
+            "Accumulate: average(toolArgs.amount)\nLimit: 10\n",
+        )
+        try:
+            set_policies([broken])
+            raise AssertionError("a malformed limit must raise, not be ignored")
+        except LimitSpecError as err:
+            assert "not supported" in str(err)
+        finally:
+            set_policies(None)

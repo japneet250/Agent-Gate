@@ -165,9 +165,51 @@ async def policies() -> list[dict[str, Any]]:
             "appliesTo": p.applies_to,
             "enforcedBy": p.enforced_by,
             "enabled": p.enabled,
+            "limit": (
+                {
+                    "accumulate": p.limit.accumulate,
+                    "limit": p.limit.limit,
+                    "unit": p.limit.unit,
+                    "scope": p.limit.scope,
+                    "whenExceeded": p.limit.when_exceeded,
+                    "match": p.limit.match,
+                }
+                if p.limit
+                else None
+            ),
         }
         for p in load_policies()
     ]
+
+
+@app.post("/policies/reload", dependencies=[Depends(require_key)])
+async def policies_reload() -> dict[str, Any]:
+    """Re-read the policy directory and re-embed, without dropping session state.
+
+    Policies are the product's configuration, so changing one should not need a
+    restart — an operator edits a markdown file and the control is live. Session
+    counters survive, so a limit can be adjusted mid-session.
+    """
+    from agentgate_engine.policy_store import set_policies
+
+    set_policies(None)
+    indexed = await warmup()
+    loaded = load_policies()
+    return {
+        "status": "reloaded",
+        "policies": len(loaded),
+        "retrieval": "hybrid" if indexed else "keyword-only",
+        "cumulativeLimits": [
+            {
+                "policy": p.name,
+                "accumulate": p.limit.accumulate,
+                "limit": p.limit.format_total(p.limit.limit),
+                "whenExceeded": p.limit.when_exceeded,
+            }
+            for p in loaded
+            if p.limit is not None
+        ],
+    }
 
 
 @app.get("/sessions/{session_id}", dependencies=[Depends(require_key)])
@@ -176,11 +218,10 @@ async def session_detail(session_id: str) -> dict[str, Any]:
     s = await session_store().get(session_id)
     return {
         "sessionId": s.session_id,
-        "totalSpend": s.total_spend,
-        "spendLimit": config.session_spend_limit,
+        # One running total per cumulative policy; what is counted is declared
+        # by the policies, not fixed by this endpoint.
+        "counters": s.counters,
         "actionCounts": s.action_counts,
-        "dataAccessCount": s.data_access_count,
-        "permissionRequests": s.permission_requests,
         # camelCase on the wire, like every other field the dashboard reads.
         "recentActions": [
             {"toolName": a["tool_name"], "toolArgs": a["tool_args"], "at": a["at"]}
