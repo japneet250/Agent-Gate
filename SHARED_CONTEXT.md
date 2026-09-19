@@ -12,6 +12,11 @@ AI agent → MCP gateway (P1) → evaluate() engine (P2) → decision → forwar
 commit doc updates straight to `main` so everyone can pull it without merging code.
 Pull/rebase before editing. Only touch your own section; the Decisions Log is append-only.
 
+**Other docs:** `CLAUDE.md` (here) is the short orientation — scope, branch model,
+commands, and the gotchas that have already cost someone time. P3's detailed
+status, blockers and open questions are in `P3_STATUS.md` on the `person3`
+branch: `git show person3:P3_STATUS.md`.
+
 ---
 
 ## Repo layout
@@ -365,4 +370,5 @@ _Append-only. Format: `- [HH:MM] (Px) <what changed / decided / impact>`_
 - [10:31] (P3) **Honest tier labelling enforced in code.** Summaries are labelled with the exact model ids that ran (default `gpt-4o-mini` vs `gemini-2.5-flash`, NOT "GPT-4o vs Gemini"), cross-tier pairs print a TIER MISMATCH warning, and the disagreement list is now the headline with aggregate percentages secondary.
 - [10:32] (P3) **`isProductNumber` guard added: true only for `--model=engine`.** Stub and judge-wrapper runs print a loud NOT A PRODUCT NUMBER banner. Please don't quote any other number as AgentGate's.
 - [10:33] (P3) **Live backend verification NOT done — there is no `.env` in the repo** and no Sentry/Gemini/LangFuse vars are exported, so I could not run against the real backends. Everything remains transport-verified against local collectors only; I have deliberately not reported mock results as live. Blocked on keys.
+- [10:40] (P3) Added `CLAUDE.md` (orientation) and `P3_STATUS.md` (P3 detail, on `person3`). **Moved the Node/SDK version pins onto `main`** — they had landed on `person3` only, so P1/P2 pulling `main` never saw them. `npm run doctor` now works from `main`.
 - [10:34] (P3) **Engine re-baseline queued, blocked on P2.** `packages/engine` does not exist yet. The moment it exports `evaluate`: `npm run eval -w @agentgate/evals -- --model=engine --update-baseline`. All prior baselines are stub / P3-judge and are superseded by that run.
