@@ -6,6 +6,19 @@ export type EvaluateFn = (
   context: SessionContext,
 ) => Promise<EvalResult>;
 
+/**
+ * TODO: confirm with P2 — proposed third parameter so the engine can be asked
+ * to decide with a specific model:
+ *
+ *   evaluate(action, context, opts?: { model?: string }): Promise<EvalResult>
+ *
+ * Until P2 confirms, the model comparison runs through P3's own judge wrapper
+ * (../models/judge.ts) instead of the engine, so the two models differ only in
+ * the model itself. If P2 adopts the option, the comparison should move behind
+ * evaluate() and the wrapper becomes redundant.
+ */
+export type EvaluateOptions = { model?: string };
+
 export type EngineKind = 'stub' | 'engine';
 
 export function engineKind(): EngineKind {

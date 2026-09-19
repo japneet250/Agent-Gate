@@ -5,3 +5,5 @@ dist/
 .env.local
 *.log
 packages/evals/report.json
+packages/evals/report.by-model.json
+packages/evals/report.failed.json
