@@ -1,13 +1,35 @@
 {
-  "name": "dashboard",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "name": "@agentgate/dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AgentGate control plane — the live action feed, evaluation traces and analytics.",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "fixtures": "node scripts/generate-fixtures.mjs",
+    "dev": "npm run fixtures && next dev -p 3100",
+    "build": "npm run fixtures && next build",
+    "start": "next start -p 3100",
+    "typecheck": "tsc --noEmit",
+    "lint": "next lint"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs"
+  "dependencies": {
+    "next": "14.2.35",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "framer-motion": "^11.18.2",
+    "recharts": "^2.15.4",
+    "lucide-react": "^1.47.0",
+    "clsx": "^2.1.1",
+    "tailwind-merge": "^3.7.0",
+    "class-variance-authority": "^0.7.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.16.5",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.19",
+    "tailwindcss-animate": "^1.0.7",
+    "typescript": "^5.6.2"
+  }
 }
