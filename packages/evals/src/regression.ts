@@ -32,6 +32,8 @@ export type Violation = { kind: 'floor' | 'regression'; metric: string; detail: 
 export type RegressionResult = {
   baseline?: { generatedAt: string; model: string; scenarioHash: string };
   comparable: boolean;
+  /** False when the slice has a single expected class, so macro-F1 was skipped. */
+  macroF1Applicable: boolean;
   violations: Violation[];
   flipped: Array<{
     id: string;
@@ -76,7 +78,13 @@ export function checkRegression(params: {
   const violations: Violation[] = [];
 
   // Absolute floors apply whether or not there is anything to compare against.
-  if (metrics.macroF1 < thresholds.minMacroF1) {
+  //
+  // macro-F1 is only meaningful when the slice actually contains more than one
+  // expected class. A single-label slice (--category=dangerous, say) averages in
+  // classes that cannot score, so applying the floor there fails every run for a
+  // reason that says nothing about quality. Per-class recall still applies.
+  const labelledClasses = metrics.perClass.filter((c) => c.support > 0).length;
+  if (labelledClasses >= 2 && metrics.macroF1 < thresholds.minMacroF1) {
     violations.push({
       kind: 'floor',
       metric: 'macro-F1',
@@ -134,6 +142,7 @@ export function checkRegression(params: {
   }
 
   return {
+    macroF1Applicable: labelledClasses >= 2,
     baseline: baseline
       ? {
           generatedAt: baseline.generatedAt,
@@ -152,6 +161,10 @@ const arrow = (d: number) => (d > 0.0005 ? '▲' : d < -0.0005 ? '▼' : '=');
 
 export function printRegression(result: RegressionResult, thresholds: Thresholds): void {
   console.log('\n=== Regression check ===');
+
+  if (!result.macroF1Applicable) {
+    console.log('  single-label slice — macro-F1 floor skipped, per-class recall floor still applies');
+  }
 
   if (!result.baseline) {
     console.log('  no previous report.json — floors only, nothing to diff against');

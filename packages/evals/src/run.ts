@@ -13,6 +13,7 @@ import { scoreSuite, type SuiteResult } from './score.js';
 import { buildReport, byCategory, metricsFor, printFailures, printMetrics } from './report.js';
 import { buildByModelReport, printComparison } from './compare.js';
 import { parseModelNames, resolveModel, type ModelName } from './models/registry.js';
+import { buildRunDoc, historyEnabled, recordRun } from './history.js';
 import {
   checkRegression,
   DEFAULT_THRESHOLDS,
@@ -53,6 +54,7 @@ function usage(): never {
       '  --max-delta=N         largest tolerated drop vs the previous run (default 0.05)',
       '  --no-baseline         ignore the previous report.json',
       '  --update-baseline     accept this run as the new baseline even if it failed',
+      '  --no-history          skip recording this run to MongoDB',
     ].join('\n'),
   );
   process.exit(1);
@@ -85,7 +87,7 @@ async function main() {
     `\nAgentGate eval harness — ${selected.length} scenarios (set ${scenarioHash}), models: ${requested.join(', ')}`,
   );
   console.log(
-    `observability: sentry=${obs.sentry ? 'on' : 'off'} langfuse=${obs.langfuse ? 'on' : 'off'}`,
+    `observability: sentry=${obs.sentry ? 'on' : 'off'} langfuse=${obs.langfuse ? 'on' : 'off'} history=${historyEnabled() ? 'on' : 'off'}`,
   );
 
   for (const name of requested) {
@@ -170,6 +172,23 @@ async function main() {
     console.log(
       `\n  baseline report.json left untouched — rerun with --update-baseline to accept these numbers`,
     );
+  }
+
+  // Eval-run history (P3's own runs only -- action logs live in P1's D1 store).
+  if (!flag('no-history')) {
+    const id = await recordRun(
+      buildRunDoc({
+        model: primary.label,
+        metrics,
+        latency: primary.latency,
+        scenarioHash,
+        scenarioCount: primary.rows.length,
+        category: only ?? 'all',
+        reportPath: path.relative(process.cwd(), outPath),
+        passed: !failing,
+      }),
+    );
+    if (id) console.log(`\n  recorded eval run ${id} to MongoDB`);
   }
 
   await shutdownObservability();
