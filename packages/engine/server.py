@@ -147,7 +147,12 @@ async def dashboard() -> FileResponse:
     Served from the engine so it is same-origin: no CORS, no mixed content when
     the engine is tunnelled over HTTPS, and no copy of the API key on disk.
     """
-    return FileResponse(STATIC_DIR / "dashboard.html")
+    # No-store: the console is edited during development and a cached copy
+    # looks like a broken build.
+    return FileResponse(
+        STATIC_DIR / "dashboard.html",
+        headers={"Cache-Control": "no-store, must-revalidate"},
+    )
 
 
 @app.get("/", include_in_schema=False)

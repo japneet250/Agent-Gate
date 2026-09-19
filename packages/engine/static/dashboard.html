@@ -83,6 +83,9 @@
        border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite}
   @keyframes sp{to{transform:rotate(360deg)}}
   .gate{position:fixed;inset:0;background:var(--bg);display:grid;place-items:center;z-index:9}
+  /* `display:grid` above out-specifies the browser's [hidden]{display:none},
+     so hiding the overlay needs an explicit rule. */
+  .gate[hidden]{display:none}
   .gate .box{max-width:400px;width:90%;text-align:center}
   .gate h2{font-size:16px;margin:0 0 8px}
   .gate p{color:var(--dim);font-size:13px;margin:0 0 16px}
@@ -316,13 +319,23 @@ async function boot(){
     await loadPolicies();
     await refreshCounters();
     buildScenarios();
-  } catch(e){ if (e.message !== 'unauthorized') console.error(e); }
+  } catch(e){
+    if (e.message !== 'unauthorized'){
+      console.error(e);
+      // Never fail silently: a blank page with a dead button is the worst outcome.
+      $('#keyErr').textContent = e.message;
+      $('#gate').hidden = false;
+    }
+  }
 }
 
 $('#keyGo').onclick = async () => {
+  const btn = $('#keyGo');
   KEY = $('#keyIn').value.trim();
-  sessionStorage.setItem('ag_key', KEY);
+  try { sessionStorage.setItem('ag_key', KEY); } catch {}
+  btn.disabled = true; btn.textContent = 'Connecting…'; $('#keyErr').textContent = '';
   await boot();
+  btn.disabled = false; btn.textContent = 'Connect';
 };
 $('#keyIn').addEventListener('keydown', e => { if (e.key === 'Enter') $('#keyGo').click(); });
 
