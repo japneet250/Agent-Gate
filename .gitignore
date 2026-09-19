@@ -4,6 +4,18 @@ dist/
 .env
 .env.local
 *.log
+.DS_Store
+.wrangler/
+
+# P3 eval reports -- regenerate with a run
 packages/evals/report.json
 packages/evals/report.by-model.json
 packages/evals/report.failed.json
+
+# Python (P2 engine)
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
