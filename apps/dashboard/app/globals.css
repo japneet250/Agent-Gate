@@ -1,0 +1,150 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * THE HARD RULE, encoded here rather than left to discipline.
+ *
+ *   .glass       -> shell only. Nav, hero, panel frames, ambient background.
+ *                   Uses backdrop-filter, which is expensive and must never sit
+ *                   behind live-updating text.
+ *   .surface     -> data surfaces. Opaque, high contrast, zero blur. Every feed
+ *                   card, risk score, block reason and number uses this.
+ *
+ * If you find yourself wanting .glass on a feed card, the answer is no. A
+ * projector at the back of a room resolves contrast, not vibe.
+ */
+
+@layer base {
+  :root {
+    --font-sans: 'Albert Sans', system-ui, sans-serif;
+  }
+
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply bg-ink-950 text-paper font-sans text-body antialiased;
+    /* Ambient depth lives on the page background, behind everything, where it
+       costs one paint rather than one per row. */
+    background-image:
+      radial-gradient(60rem 40rem at 12% -10%, rgba(91, 140, 255, 0.10), transparent 60%),
+      radial-gradient(50rem 36rem at 92% 6%, rgba(255, 77, 100, 0.07), transparent 60%),
+      radial-gradient(44rem 32rem at 50% 108%, rgba(61, 220, 151, 0.06), transparent 60%);
+    background-attachment: fixed;
+  }
+
+  ::selection {
+    background: rgba(91, 140, 255, 0.35);
+  }
+
+  /* Respect the OS setting. A demo that induces motion sickness is a bad demo. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer components {
+  /* ---------------------------------------------------------------- shell */
+  .glass {
+    background: linear-gradient(
+      160deg,
+      rgba(255, 255, 255, 0.055) 0%,
+      rgba(255, 255, 255, 0.022) 45%,
+      rgba(255, 255, 255, 0.01) 100%
+    );
+    backdrop-filter: blur(20px) saturate(140%);
+    -webkit-backdrop-filter: blur(20px) saturate(140%);
+    border: 1px solid rgba(255, 255, 255, 0.075);
+    box-shadow:
+      0 1px 0 rgba(255, 255, 255, 0.06) inset,
+      0 24px 64px -32px rgba(0, 0, 0, 0.9);
+  }
+
+  /* Edge-lit top border — the "liquid glass" tell, on static chrome only. */
+  .glass-edge {
+    position: relative;
+  }
+  .glass-edge::before {
+    content: '';
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 1px;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgba(255, 255, 255, 0.28) 20%,
+      rgba(255, 255, 255, 0.28) 80%,
+      transparent
+    );
+    pointer-events: none;
+  }
+
+  /* ------------------------------------------------------- data surfaces */
+  /* Opaque. No backdrop-filter. This is what live text sits on. */
+  .surface {
+    background-color: #10131a;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset;
+  }
+
+  .surface-raised {
+    background-color: #151922;
+    border: 1px solid rgba(255, 255, 255, 0.09);
+  }
+
+  /* Decision accents: a solid left rail + a flat tint. No blur, no gradient
+     behind the text itself. */
+  .rail-allow {
+    box-shadow: inset 3px 0 0 #3ddc97;
+  }
+  .rail-block {
+    box-shadow: inset 3px 0 0 #ff4d64;
+  }
+  .rail-escalate {
+    box-shadow: inset 3px 0 0 #ffb020;
+  }
+
+  .tint-block {
+    background-color: #1a1014;
+  }
+  .tint-escalate {
+    background-color: #191410;
+  }
+  .tint-allow {
+    background-color: #0f1614;
+  }
+
+  /* ------------------------------------------------------------- pills */
+  .pill {
+    @apply inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5 text-meta font-semibold uppercase tracking-wide;
+  }
+
+  .num {
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+
+  /* Focus ring that survives a dark theme and a projector. */
+  .ring-focus {
+    @apply outline-none ring-2 ring-accent/70 ring-offset-2 ring-offset-ink-950;
+  }
+}
+
+@layer utilities {
+  /* Promote only the elements that actually animate, and only while they do. */
+  .will-animate {
+    will-change: transform, opacity;
+  }
+  .no-blur {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+}
