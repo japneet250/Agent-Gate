@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import '@agentgate/observability/load-env';
 import { writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';

@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import '@agentgate/observability/load-env';
 import { randomUUID } from 'node:crypto';
 import { resolveEvaluate } from '@agentgate/evals/engine';
 import {
