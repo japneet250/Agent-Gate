@@ -14,12 +14,13 @@ the gateway's own /evaluate apart from the engine's in logs.
 
 from __future__ import annotations
 
+import secrets
 import time
 from contextlib import asynccontextmanager
 from typing import Any
 
 from agentgate_shared import AgentAction, SessionContext
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -78,6 +79,22 @@ app.add_middleware(
 )
 
 
+def require_key(authorization: str | None = Header(default=None)) -> None:
+    """Shared-secret auth.
+
+    No key configured means the engine is open, which is correct for localhost
+    and wrong for anything reachable from the internet — an open endpoint lets
+    anyone spend our OpenAI credit. Set AGENTGATE_API_KEY before tunnelling or
+    deploying.
+    """
+    if not config.api_key:
+        return
+    expected = f"Bearer {config.api_key}"
+    # compare_digest avoids leaking the key through response timing
+    if not authorization or not secrets.compare_digest(authorization, expected):
+        raise HTTPException(status_code=401, detail="missing or invalid API key")
+
+
 class EvaluateRequest(BaseModel):
     """Accepts either {action, context} or a bare action, so a quick curl works."""
 
@@ -106,8 +123,8 @@ class EvaluateRequest(BaseModel):
         )
 
 
-@app.post("/evaluate")
-@app.post("/judge/evaluate")
+@app.post("/evaluate", dependencies=[Depends(require_key)])
+@app.post("/judge/evaluate", dependencies=[Depends(require_key)])
 async def evaluate_endpoint(request: EvaluateRequest) -> dict[str, Any]:
     action, context = request.resolve()
     detail = await evaluate_detailed(action, context)
@@ -130,12 +147,13 @@ async def health() -> dict[str, Any]:
         "tracing": tracing_enabled(),
         "openaiConfigured": config.has_openai(),
         "cloudflareConfigured": cloudflare_configured(),
+        "authRequired": bool(config.api_key),
         "storage": _storage,
         "stats": _stats,
     }
 
 
-@app.get("/policies")
+@app.get("/policies", dependencies=[Depends(require_key)])
 async def policies() -> list[dict[str, Any]]:
     """The policy store, for the dashboard's policy editor."""
     return [
@@ -152,7 +170,7 @@ async def policies() -> list[dict[str, Any]]:
     ]
 
 
-@app.get("/sessions/{session_id}")
+@app.get("/sessions/{session_id}", dependencies=[Depends(require_key)])
 async def session_detail(session_id: str) -> dict[str, Any]:
     """Live cumulative state for a session — what the pattern detector can see."""
     s = await session_store().get(session_id)
@@ -171,7 +189,7 @@ async def session_detail(session_id: str) -> dict[str, Any]:
     }
 
 
-@app.post("/sessions/reset")
+@app.post("/sessions/reset", dependencies=[Depends(require_key)])
 async def sessions_reset() -> dict[str, str]:
     """Clear cumulative state. Use between demo runs."""
     await reset_sessions()
