@@ -334,15 +334,20 @@ could never have worked; the harness now calls it over HTTP. Ran:
 npm run eval -w @agentgate/evals -- --model=engine --update-baseline
 ```
 
-**AgentGate scored 71.0% accuracy, macro-F1 0.584** over all 100 scenarios,
-100/100 scored, **zero degraded evaluations**, `isProductNumber: true`.
+**AgentGate scores 70–71% accuracy, macro-F1 0.577–0.584** over all 100
+scenarios, 100/100 scored, **zero degraded evaluations**, `isProductNumber:
+true`. Current baseline: **70.0% / 0.577**.
+
+**Run-to-run variance is real but small.** Four full runs: three at 71.0% and
+one at 70.0% — about one scenario of drift, well inside the regression gate's
+0.05 max-delta. Quote it as "about 70%", not to three significant figures.
 Engine at full strength (`retrieval: hybrid`, judge `gpt-4o`).
 Latency mean 1986ms / p50 1856ms / p95 2913ms.
 
 | class | precision | recall | F1 |
 | --- | --- | --- | --- |
-| allow | 94.3% | 78.6% | 0.857 |
-| escalate | 66.7% | **9.1%** | 0.160 |
+| allow | 94.1% | 76.2% | 0.842 |
+| escalate | 50.0% | **9.1%** | 0.154 |
 | block | 58.1% | **100.0%** | 0.735 |
 
 **Read this before reacting to the number.** It is below the stub's 91%, but the
@@ -473,8 +478,8 @@ cd packages/evals/frameworks/deepeval && ./setup.sh
 ./venv/bin/python run_deepeval.py        # offline, no API spend, no engine needed
 ```
 
-**Result: 71/100 = 71.0%, exactly matching the harness's 71.0%. The frameworks
-AGREE.** That is a property of the harnesses, not of the engine's calibration,
+**Result: 70/100 = 70.0%, exactly matching the harness's 70.0%. The frameworks
+AGREE**, and they agreed again on the previous 71.0% baseline. That is a property of the harnesses, not of the engine's calibration,
 so it holds regardless of the D1–D4 reconciliation.
 
 It is **not** a second accuracy number and must not be quoted as one. On
@@ -537,3 +542,6 @@ _Append-only. Format: `- [HH:MM] (Px) <what changed / decided / impact>`_
 - [19:50] (P3) **Baseline rebuilt and reproduced identically three times: 71.0% accuracy / macro-F1 0.584, escalate recall 9.1%, 100/100 scored, zero degraded.** No P3-side changes were made, so the number cannot move until P2 acts on the action items above. Useful side finding: an LLM-judge pipeline reproducing exactly across three runs is a real stability signal.
 - [19:51] (P3) **DeepEval cross-check added** (`packages/evals/frameworks/deepeval/`, own venv). Scores the same scenarios and the same engine decisions: **71/100 = 71.0%, exactly matching the custom harness — the frameworks AGREE.** Offline by default (reads report.json, no API spend, no engine needed). It is a harness-validation artifact, **not a second accuracy number**; on disagreement it exits non-zero rather than averaging.
 - [19:52] (P3) **`main`'s `.gitignore` was missing the eval-report ignore lines** — they were added on `person3` and never propagated, so on `main` report.json/.by-model/.failed showed as ordinary untracked files, one `git add -A` from being committed to the branch everyone pulls. Fixed on `main`.
+- [20:05] (P3) **Correction to my [19:50] line.** I wrote that the baseline "reproduced identically three times" and called it a stability signal. A fourth run came back **70.0% / macro-F1 0.577**, one scenario different. So: three runs at 71.0%, one at 70.0% — roughly 1% run-to-run drift, well inside the regression gate's 0.05 max-delta, but **quote it as "about 70%", not to three significant figures**. Current baseline is the 70.0% run. escalate recall is 9.1% in both.
+- [20:06] (P3) **Root cause of the vanishing baseline: `packages/evals/report.json` was committed to `main` by accident in 3ef8e07.** `.gitignore` only applies to untracked files, so the ignore never took effect — checking out `main` overwrote the local report with main's stale copy and checking out `person3` deleted it, because it is tracked on one branch and not the other. Every docs round-trip silently destroyed the `--model=engine` baseline; it cost two full re-runs today before I caught it. **Untracked from `main` (bc59d8e).** The stale tracked copy was the stub 91% run sitting where P1/P2 pull it — readable as AgentGate's score, which it is not.
+- [20:07] (P3) **DeepEval re-checked against the current baseline: 70/100 = 70.0%, matching the harness exactly.** The two frameworks have now agreed on two different baselines, which is the point of the cross-check.
