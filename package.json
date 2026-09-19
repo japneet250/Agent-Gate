@@ -1,0 +1,9 @@
+{
+  "name": "agentgate",
+  "private": true,
+  "version": "0.0.0",
+  "workspaces": ["packages/*", "apps/*"],
+  "scripts": {
+    "engine:test": "npm run test -w @agentgate/engine"
+  }
+}
