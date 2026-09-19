@@ -48,15 +48,24 @@ export type RunTrace = {
   update: (output: Record<string, unknown>) => void;
 };
 
+export type ScoreInfo = {
+  scenarioId: string;
+  expected: string;
+  correct: boolean;
+};
+
 export type ToolCallSpan = {
   evaluated: (result: EvalResult) => void;
   executed: (output: string | undefined) => void;
+  /** Attaches a correctness score, making the trace self-evaluating. */
+  scored: (info: ScoreInfo) => void;
   end: () => void;
 };
 
 const NOOP_TOOL_CALL: ToolCallSpan = {
   evaluated: () => {},
   executed: () => {},
+  scored: () => {},
   end: () => {},
 };
 
@@ -112,6 +121,15 @@ export function startRunTrace(params: {
         executed(output) {
           execSpan = span.span({ name: SPAN.toolExec, output: { result: output ?? null } });
           execSpan.end();
+        },
+        scored(info) {
+          span.score({
+            name: 'decision_correctness',
+            value: info.correct ? 1 : 0,
+            comment: info.correct
+              ? `${info.scenarioId}: matched label ${info.expected}`
+              : `${info.scenarioId}: expected ${info.expected}, got ${decision ?? 'unknown'}`,
+          });
         },
         end() {
           span.end({ output: { decision: decision ?? 'unknown' } });

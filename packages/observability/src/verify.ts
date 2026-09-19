@@ -9,6 +9,7 @@
  *   npm run verify -w @agentgate/observability
  */
 import { createServer } from 'node:http';
+import { gunzipSync } from 'node:zlib';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
@@ -17,7 +18,29 @@ import path from 'node:path';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.join(here, '..', '..', '..');
 
-type Captured = { sentry: unknown[]; langfuse: unknown[] };
+type EnvelopeItem = { header: Record<string, unknown>; payload: Record<string, unknown> };
+type Captured = { sentry: EnvelopeItem[]; langfuse: unknown[] };
+
+/**
+ * A Sentry envelope is newline-delimited JSON: one envelope header, then
+ * alternating item-header / item-payload pairs. Parsing it properly (rather
+ * than grepping every line) is what lets us tell an event from a transaction
+ * from a log batch.
+ */
+function parseEnvelope(body: string): EnvelopeItem[] {
+  const lines = body.split('\n').filter((l) => l.trim());
+  const items: EnvelopeItem[] = [];
+  for (let i = 1; i < lines.length; i += 2) {
+    try {
+      const header = JSON.parse(lines[i]!) as Record<string, unknown>;
+      const payload = JSON.parse(lines[i + 1] ?? '{}') as Record<string, unknown>;
+      items.push({ header, payload });
+    } catch {
+      /* a malformed tail is not worth failing the check over */
+    }
+  }
+  return items;
+}
 
 async function main() {
   let captured: Captured = { sentry: [], langfuse: [] };
@@ -26,19 +49,17 @@ async function main() {
     const chunks: Buffer[] = [];
     req.on('data', (c: Buffer) => chunks.push(c));
     req.on('end', () => {
-      const body = Buffer.concat(chunks).toString('utf8');
+      const raw = Buffer.concat(chunks);
+      // Sentry gzips envelopes once they pass a size threshold -- a transaction
+      // carrying a few dozen spans does. Reading it as utf8 silently yields
+      // garbage, so decompress before parsing.
+      const body = (
+        req.headers['content-encoding'] === 'gzip' ? gunzipSync(raw) : raw
+      ).toString('utf8');
       const url = req.url ?? '';
 
       if (url.includes('/envelope')) {
-        // Sentry envelopes are newline-delimited JSON.
-        for (const line of body.split('\n')) {
-          if (!line.trim()) continue;
-          try {
-            captured.sentry.push(JSON.parse(line));
-          } catch {
-            /* envelope headers we don't care about */
-          }
-        }
+        captured.sentry.push(...parseEnvelope(body));
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end('{"id":"local"}');
         return;
@@ -91,39 +112,87 @@ async function main() {
   function report(label: string, code: number): boolean {
     // Sentry attaches the whole trail to every event, so take the longest one
     // rather than summing across events.
-    const trails = captured.sentry.map((item) => {
-      const ev = item as { breadcrumbs?: Array<{ category?: string; message?: string }> };
-      return (ev.breadcrumbs ?? []).filter((b) => b.category === 'agentgate.evaluate');
+    const itemsOfType = (t: string) =>
+      captured.sentry.filter((i) => i.header.type === t).map((i) => i.payload);
+
+    const events = itemsOfType('event');
+    const transactions = itemsOfType('transaction');
+    const logBatches = itemsOfType('log');
+
+    const trails = events.map((ev) => {
+      const e = ev as { breadcrumbs?: Array<{ category?: string; message?: string }> };
+      return (e.breadcrumbs ?? []).filter((b) => b.category === 'agentgate.evaluate');
     });
     const breadcrumbs = trails.sort((a, b) => b.length - a.length)[0] ?? [];
-    const messages = captured.sentry.filter(
-      (item) => (item as { message?: unknown }).message !== undefined,
+
+    // Each transaction carries its child spans; count the evaluation ones.
+    const evalSpans = transactions.flatMap((t) => {
+      const spans = (t as { spans?: Array<{ op?: string }> }).spans ?? [];
+      return spans.filter((sp) => sp.op === 'agentgate.evaluate');
+    });
+    const spanAttrs = evalSpans
+      .map((sp) => (sp as { data?: Record<string, unknown> }).data ?? {})
+      .filter((d) => d['agentgate.decision'] !== undefined);
+
+    const logs = logBatches.flatMap(
+      (b) => (b as { items?: Array<{ level?: string; body?: string }> }).items ?? [],
     );
-    // span-create carries the name; span-update is the matching end event.
-    const spans = captured.langfuse.filter(
+
+    const langfuseSpans = captured.langfuse.filter(
       (e) => ((e as { type?: string }).type ?? '') === 'span-create',
+    );
+    const scores = captured.langfuse.filter((e) =>
+      ((e as { type?: string }).type ?? '').startsWith('score'),
     );
     const traces = captured.langfuse.filter((e) =>
       ((e as { type?: string }).type ?? '').startsWith('trace'),
     );
     const spanNames = [
       ...new Set(
-        spans.map((s) => ((s as { body?: { name?: string } }).body?.name ?? '?')),
+        langfuseSpans.map((sp) => ((sp as { body?: { name?: string } }).body?.name ?? '?')),
       ),
     ].sort();
 
     console.log(`\n--- ${label}: what the collector received ---`);
-    console.log(`  sentry  : ${captured.sentry.length} payload(s)`);
+    console.log(`  sentry`);
     console.log(
-      `            ${messages.length} event(s), longest agentgate.evaluate trail = ${breadcrumbs.length}`,
+      `    events      : ${events.length}, longest agentgate.evaluate breadcrumb trail = ${breadcrumbs.length}`,
     );
-    for (const b of breadcrumbs.slice(0, 6)) console.log(`              · ${b.message}`);
-    if (breadcrumbs.length > 6)
-      console.log(`              · ... ${breadcrumbs.length - 6} more`);
-    console.log(`  langfuse: ${captured.langfuse.length} ingest event(s)`);
-    console.log(`            ${traces.length} trace(s), ${spans.length} span(s): ${spanNames.join(', ') || 'none'}`);
+    for (const b of breadcrumbs.slice(0, 4)) console.log(`                  · ${b.message}`);
+    if (breadcrumbs.length > 4)
+      console.log(`                  · ... ${breadcrumbs.length - 4} more`);
+    console.log(
+      `    transactions: ${transactions.length}, with ${evalSpans.length} agentgate.evaluate span(s)`,
+    );
+    if (spanAttrs[0]) {
+      const a = spanAttrs[0];
+      console.log(
+        `                  · sample attrs: decision=${a['agentgate.decision']} risk=${a['agentgate.risk_score']} tool=${a['agentgate.tool_name']} path=${a['agentgate.path']} latency=${a['agentgate.latency_ms']}ms`,
+      );
+    }
+    console.log(`    logs        : ${logs.length}`);
+    for (const l of logs.slice(0, 3)) console.log(`                  · [${l.level}] ${l.body}`);
+    if (logs.length > 3) console.log(`                  · ... ${logs.length - 3} more`);
+    console.log(`  langfuse`);
+    console.log(
+      `    traces ${traces.length}, spans ${langfuseSpans.length} (${spanNames.join(', ') || 'none'}), scores ${scores.length}`,
+    );
 
-    const ok = breadcrumbs.length > 0 && spans.length > 0 && code === 0;
+    // Every product we claim must actually have produced something.
+    const checks = {
+      breadcrumbs: breadcrumbs.length > 0,
+      transactions: transactions.length > 0,
+      evaluationSpans: evalSpans.length > 0,
+      spanAttributes: spanAttrs.length > 0,
+      logs: logs.length > 0,
+      langfuseSpans: langfuseSpans.length > 0,
+      exitedClean: code === 0,
+    };
+    const failed = Object.entries(checks)
+      .filter(([, v]) => !v)
+      .map(([k]) => k);
+    const ok = failed.length === 0;
+    if (!ok) console.log(`    missing: ${failed.join(', ')}`);
     console.log(`\n${ok ? 'PASS' : 'FAIL'} — ${label} exited ${code}`);
     return ok;
   }

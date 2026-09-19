@@ -13,12 +13,12 @@
   },
   "dependencies": {
     "@agentgate/shared-types": "*",
-    "@sentry/node": "^8.33.1",
+    "@sentry/node": "^10.75.0",
     "langfuse": "^3.29.1"
   },
   "devDependencies": {
     "@types/node": "^20.16.5",
-    "typescript": "^5.6.2",
-    "tsx": "^4.19.1"
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.2"
   }
 }

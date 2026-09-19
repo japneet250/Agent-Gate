@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { resolveEvaluate } from '@agentgate/evals/engine';
 import {
   captureError,
+  instrumentGate,
   observeRun,
   shutdownObservability,
   startObservability,
@@ -54,7 +55,8 @@ async function main() {
   let gateLabel = 'off (pass-through)';
   if (gateKind !== 'off') {
     const { evaluate, kind } = await resolveEvaluate();
-    gate = evaluate;
+    // Every evaluate() call becomes a Sentry span.
+    gate = instrumentGate(evaluate, 'rule');
     gateLabel = kind === 'stub' ? 'stub engine' : 'real engine (P2)';
   }
 
@@ -67,31 +69,40 @@ async function main() {
     `\n=== ${persona.agentId} | mode=${mode} | gate=${gateLabel} | session=${sessionId.slice(0, 8)} ===\n`,
   );
 
-  const run = observeRun({
-    sessionId,
-    agentId: persona.agentId,
-    metadata: { persona: personaName, mode, gate: gateLabel, driver: flag('llm') ? 'llm' : 'script' },
-  });
+  const result = await observeRun(
+    {
+      sessionId,
+      agentId: persona.agentId,
+      metadata: {
+        persona: personaName,
+        mode,
+        gate: gateLabel,
+        driver: flag('llm') ? 'llm' : 'script',
+      },
+    },
+    async (run) => {
+      const opts = {
+        agentId: persona.agentId,
+        server: persona.server,
+        sessionId,
+        gate,
+        onStep: (step: StepLog) => run.step(step.action, step.evaluation, step.output),
+      };
 
-  const opts = {
-    agentId: persona.agentId,
-    server: persona.server,
-    sessionId,
-    gate,
-    onStep: (step: StepLog) => run.step(step.action, step.evaluation, step.output),
-  };
+      const r = flag('llm')
+        ? await runAgent({
+            ...opts,
+            task: persona.tasks[mode],
+            systemPrompt: persona.systemPrompt,
+          })
+        : await runScript(opts, persona.scripts[mode]);
 
-  const result = flag('llm')
-    ? await runAgent({
-        ...opts,
-        task: persona.tasks[mode],
-        systemPrompt: persona.systemPrompt,
-      })
-    : await runScript(opts, persona.scripts[mode]);
-
-  const counts = { allow: 0, escalate: 0, block: 0 };
-  for (const s of result.steps) counts[s.evaluation.decision]++;
-  run.end({ steps: result.steps.length, ...counts, finalMessage: result.finalMessage ?? null });
+      const counts = { allow: 0, escalate: 0, block: 0 };
+      for (const s of r.steps) counts[s.evaluation.decision]++;
+      run.end({ steps: r.steps.length, ...counts, finalMessage: r.finalMessage ?? null });
+      return r;
+    },
+  );
 
   if (flag('json')) console.log(JSON.stringify(result, null, 2));
   else summarise(result);
