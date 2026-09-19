@@ -24,6 +24,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 
 from agentgate_engine import (
+    cloudflare_configured,
+    configure_cloudflare_stores,
     evaluate_detailed,
     flush_traces,
     is_indexed,
@@ -39,8 +41,16 @@ _started_at = time.time()
 _stats = {"evaluated": 0, "allow": 0, "block": 0, "escalate": 0}
 
 
+_storage = {"vectors": "memory", "sessions": "memory"}
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _storage
+    # Point at Cloudflare when credentials are present; falls back silently
+    # to in-memory and says so in /health if it cannot reach them.
+    _storage = await configure_cloudflare_stores()
+    print(f"[agentgate] storage — vectors: {_storage['vectors']}, sessions: {_storage['sessions']}")
     indexed = await warmup()
     print(
         f"[agentgate] engine ready — {len(load_policies())} policies, "
@@ -119,6 +129,8 @@ async def health() -> dict[str, Any]:
         "classifierModel": config.classifier_model,
         "tracing": tracing_enabled(),
         "openaiConfigured": config.has_openai(),
+        "cloudflareConfigured": cloudflare_configured(),
+        "storage": _storage,
         "stats": _stats,
     }
 

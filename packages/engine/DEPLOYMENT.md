@@ -5,7 +5,46 @@ changes Person 1's plan, and it is better found now than at 3am.
 
 ---
 
+## Cloudflare: what the engine now uses
+
+The engine talks to **Vectorize** (RAG) and **D1** (session state) over their REST
+APIs. It does not need to run on Workers to do that.
+
+```bash
+# 1. create a D1 database (optional — sessions stay in memory without it)
+npx wrangler d1 create agentgate        # prints database_id
+
+# 2. put these in the repo-root .env
+CLOUDFLARE_ACCOUNT_ID=...
+CLOUDFLARE_API_TOKEN=...                # needs Vectorize:Edit and D1:Edit
+VECTORIZE_INDEX=agentgate-policies
+D1_DATABASE_ID=...
+
+# 3. provision and verify end to end
+./venv/bin/python cloudflare_setup.py
+```
+
+That creates the Vectorize index, embeds all 21 policies into it, creates the D1
+table, and runs one real query and one real write so you know it works before
+the demo rather than during it.
+
+`GET /health` then reports what is actually in use:
+
+```json
+"storage": { "vectors": "vectorize:agentgate-policies", "sessions": "d1:a1b2c3d4…" }
+```
+
+**Both stores fail soft.** If Cloudflare is unreachable the engine falls back to
+in-memory and says so in `/health` rather than going down — a firewall that
+cannot reach its vector database should still judge. That also means you must
+*read* `/health` to know Cloudflare is really being used; the demo will not tell
+you, because it works either way.
+
+---
+
 ## The constraint
+
+What Cloudflare does *not* do here is run the engine.
 
 **The engine is Python. It cannot run on Cloudflare Workers.** Workers execute
 JavaScript and Wasm; there is no CPython runtime. `langgraph`, `openai` and

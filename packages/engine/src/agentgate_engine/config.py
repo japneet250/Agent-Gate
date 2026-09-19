@@ -79,6 +79,13 @@ class Config:
     sparse_weight: float = field(default_factory=lambda: _num("AGENTGATE_SPARSE_WEIGHT", 0.3))
     category_boost: float = field(default_factory=lambda: _num("AGENTGATE_CATEGORY_BOOST", 0.15))
 
+    # Cloudflare. When account id + token + index/database are set, the engine
+    # uses Vectorize for RAG and D1 for session state instead of memory.
+    cloudflare_account_id: str = field(default_factory=lambda: os.getenv("CLOUDFLARE_ACCOUNT_ID", ""))
+    cloudflare_api_token: str = field(default_factory=lambda: os.getenv("CLOUDFLARE_API_TOKEN", ""))
+    vectorize_index: str = field(default_factory=lambda: os.getenv("VECTORIZE_INDEX", "agentgate-policies"))
+    d1_database_id: str = field(default_factory=lambda: os.getenv("D1_DATABASE_ID", ""))
+
     langfuse_public_key: str = field(default_factory=lambda: os.getenv("LANGFUSE_PUBLIC_KEY", ""))
     langfuse_secret_key: str = field(default_factory=lambda: os.getenv("LANGFUSE_SECRET_KEY", ""))
     langfuse_base_url: str = field(
