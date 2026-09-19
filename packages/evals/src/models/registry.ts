@@ -18,7 +18,9 @@ import { createJudge, hasApiKey, API_KEY_ENV, type Provider } from './judge.js';
  */
 export const MODEL_IDS = {
   openai: process.env.OPENAI_JUDGE_MODEL ?? 'gpt-4o-mini',
-  gemini: process.env.GEMINI_JUDGE_MODEL ?? 'gemini-2.5-flash',
+  // gemini-2.5-flash now 404s for new API keys ("no longer available to new
+  // users"); Google's own error recommends this replacement.
+  gemini: process.env.GEMINI_JUDGE_MODEL ?? 'gemini-3.6-flash',
 } as const;
 
 export type ModelName = 'stub' | 'engine' | Provider;

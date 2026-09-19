@@ -16,7 +16,7 @@ import { createJudge } from './judge.js';
 import { JudgeInvalidOutput, JudgeUnavailable } from './errors.js';
 import { JUDGE_SYSTEM_PROMPT, buildJudgeInput } from './prompt.js';
 import { comparisonLabel, hasTierMismatch } from '../compare.js';
-import { tierOf } from './registry.js';
+import { tierOf, MODEL_IDS } from './registry.js';
 import type { SuiteResult } from '../score.js';
 
 type Seen = { provider: string; url: string; body: Record<string, unknown> };
@@ -207,8 +207,10 @@ async function main() {
     counts: { scored: 0, invalid: 0, skipped: 0, errored: 0 },
     retries: 0,
   });
-  const defaultPair = [fakeSuite('gpt-4o-mini'), fakeSuite('gemini-2.5-flash')];
-  const mixedPair = [fakeSuite('gpt-4o'), fakeSuite('gemini-2.5-flash')];
+  // Read the real defaults rather than hardcoding: a retired model id should
+  // show up here as a stale default, not be baked into the test that guards it.
+  const defaultPair = [fakeSuite(MODEL_IDS.openai), fakeSuite(MODEL_IDS.gemini)];
+  const mixedPair = [fakeSuite('gpt-4o'), fakeSuite(MODEL_IDS.gemini)];
   const label = comparisonLabel(defaultPair);
 
   const expectedInput = buildJudgeInput(ACTION, CONTEXT);
@@ -258,7 +260,7 @@ async function main() {
     'gemini recovers from 429 via backoff': retryRecovered.gemini === true,
     'openai exhausted retries -> skipped bucket': skippedBuckets.openai === true,
     'gemini exhausted retries -> skipped bucket': skippedBuckets.gemini === true,
-    'label uses exact model ids': label === 'gpt-4o-mini vs gemini-2.5-flash',
+    'label uses exact model ids': label === `${MODEL_IDS.openai} vs ${MODEL_IDS.gemini}`,
     'label is not a provider family name': !/^GPT-4o vs Gemini$/i.test(label),
     'same-tier pair flagged as comparable': hasTierMismatch(defaultPair) === false,
     'cross-tier pair flagged as mismatch': hasTierMismatch(mixedPair) === true,
