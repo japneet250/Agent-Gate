@@ -1,0 +1,3 @@
+# DeepEval cross-check harness (P3). Kept in its own venv on purpose: deepeval
+# pulls a large dependency tree and must not perturb the engine's venv.
+deepeval>=1.0
