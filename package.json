@@ -1,0 +1,1 @@
+{ "name": "agentgate", "private": true, "workspaces": ["packages/*", "apps/*"] }
