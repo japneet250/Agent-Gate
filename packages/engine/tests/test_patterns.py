@@ -1,0 +1,140 @@
+"""Cumulative pattern detection and the consistency guardrail."""
+
+from __future__ import annotations
+
+from agentgate_engine import evaluate_detailed
+from agentgate_engine.config import config
+from agentgate_engine.guardrails import fingerprint
+
+from .conftest import make_action
+
+
+def po(n: int, session: str = "procurement"):
+    """A $400 purchase order — individually well under the $500 approval threshold."""
+    return make_action(
+        "approve_payment", {"vendor": f"Vendor {n}", "amount": 400, "poNumber": f"PO-{n}"}, session
+    )
+
+
+class TestFingerprint:
+    def test_ignores_key_order_but_not_values(self):
+        assert fingerprint("t", {"a": 1, "b": 2}) == fingerprint("t", {"b": 2, "a": 1})
+        assert fingerprint("approve_payment", {"vendor": "Acme"}) != fingerprint(
+            "approve_payment", {"vendor": "Globex"}
+        ), "different vendors are different actions, not a loop"
+
+
+class TestCumulativeSpend:
+    async def test_allows_each_order_until_session_total_crosses_the_limit(self, harness):
+        harness()
+        results = [await evaluate_detailed(po(i)) for i in range(1, 21)]
+
+        # 12 x $400 = $4,800 is under the limit; the 13th tips it over.
+        flagged_at = next(
+            i for i, r in enumerate(results) if r.result.decision != "allow"
+        )
+        assert flagged_at == 12, f"expected the 13th order to flag, got #{flagged_at + 1}"
+
+        assert all(r.result.decision == "allow" for r in results[:12]), (
+            "individually-safe orders must pass without friction"
+        )
+
+        flagged = results[12]
+        assert flagged.result.decision == "escalate"
+        assert "Cumulative spend alert" in flagged.result.reasoning
+        assert "approval-threshold splitting" in flagged.result.reasoning
+        assert flagged.result.violated_policy == "Cumulative Spending Limit"
+        assert flagged.result.risk_score >= 75
+
+    async def test_keeps_sessions_isolated(self, harness):
+        harness()
+        for i in range(1, 21):
+            await evaluate_detailed(po(i, "session-a"))
+        other = await evaluate_detailed(po(1, "session-b"))
+        assert other.result.decision == "allow", (
+            "one agent's spend must not taint another session"
+        )
+
+    async def test_does_not_count_spend_it_did_not_allow(self, harness):
+        harness(judge=lambda prompt: {"risk_score": 95, "reasoning": "blocked", "violated_policy": ""})
+        for i in range(1, 21):
+            await evaluate_detailed(po(i))
+        r = await evaluate_detailed(po(99))
+        # Everything was blocked, so nothing was ever spent — no cumulative alert.
+        assert "Cumulative spend alert" not in r.result.reasoning
+
+
+class TestLoopDetection:
+    async def test_flags_identical_call_repeated_past_the_limit(self, harness):
+        harness()
+        fired_at = 0
+        for i in range(1, config.repeated_call_limit + 4):
+            r = await evaluate_detailed(
+                make_action("lookup_customer", {"customerId": "C-1"}, "loop-session")
+            )
+            if "Repetition alert" in r.result.reasoning and not fired_at:
+                fired_at = i
+        assert fired_at == config.repeated_call_limit + 1
+
+    async def test_does_not_flag_same_tool_with_different_arguments(self, harness):
+        harness()
+        for i in range(1, config.repeated_call_limit + 4):
+            r = await evaluate_detailed(
+                make_action("lookup_customer", {"customerId": f"C-{i}"}, "varied-session")
+            )
+            assert "Repetition alert" not in r.result.reasoning, f"flagged at #{i}"
+
+
+class TestPrivilegeEscalation:
+    async def test_escalates_after_repeated_permission_calls(self, harness):
+        harness()
+        flagged = None
+        for i in range(1, config.permission_request_limit + 1):
+            flagged = await evaluate_detailed(
+                make_action("grant_role", {"role": f"role-{i}"}, "priv-session")
+            )
+        assert "Privilege escalation alert" in flagged.result.reasoning
+        assert flagged.result.decision != "allow"
+
+
+class TestConsistencyGuardrail:
+    async def test_takes_stricter_score_when_identical_action_scores_inconsistently(self, harness):
+        calls = {"n": 0}
+
+        def judge(prompt: str) -> dict:
+            calls["n"] += 1
+            # Same action, wildly different scores — an inconsistent judge.
+            return {
+                "risk_score": 80 if calls["n"] == 1 else 5,
+                "reasoning": "mock",
+                "violated_policy": "",
+            }
+
+        harness(judge=judge)
+        act = make_action("issue_refund", {"customerId": "C-1", "amount": 300}, "consistency")
+        first = await evaluate_detailed(act)
+        second = await evaluate_detailed(act)
+
+        assert first.result.risk_score == 80
+        assert second.result.risk_score == 80, "the inconsistent low score must not win"
+        assert any(g.rule == "consistency" for g in second.guardrails)
+        assert second.result.decision != "allow"
+
+    async def test_leaves_genuinely_different_actions_alone(self, harness):
+        calls = {"n": 0}
+
+        def judge(prompt: str) -> dict:
+            calls["n"] += 1
+            return {
+                "risk_score": 80 if calls["n"] == 1 else 5,
+                "reasoning": "mock",
+                "violated_policy": "",
+            }
+
+        harness(judge=judge)
+        await evaluate_detailed(make_action("send_email", {"body": "SSN 123-45-6789"}, "s"))
+        benign = await evaluate_detailed(make_action("send_email", {"body": "your receipt"}, "s"))
+        assert benign.result.risk_score == 5, (
+            "a different email must not inherit the dangerous score"
+        )
+        assert benign.result.decision == "allow"
