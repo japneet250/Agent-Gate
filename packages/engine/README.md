@@ -22,6 +22,7 @@ cd packages/engine
 ./venv/bin/python demo.py                    # narrated four-scene walkthrough
 ./venv/bin/python test_live.py               # 18 live scenarios against GPT-4o
 ./venv/bin/uvicorn server:app --port 8000    # the service Person 1 calls
+# then open http://localhost:8000/dashboard  — click-to-test console
 ```
 
 ```python

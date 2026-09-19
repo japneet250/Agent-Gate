@@ -25,6 +25,7 @@ dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
+include-package-data = true
 packages = ["agentgate_engine", "agentgate_engine.nodes"]
 
 [tool.pytest.ini_options]

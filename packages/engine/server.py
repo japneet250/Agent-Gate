@@ -17,11 +17,13 @@ from __future__ import annotations
 import secrets
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from agentgate_shared import AgentAction, SessionContext
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from agentgate_engine import (
@@ -133,6 +135,24 @@ async def evaluate_endpoint(request: EvaluateRequest) -> dict[str, Any]:
     _stats[detail.result.decision] += 1
 
     return detail.to_wire()
+
+
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+
+@app.get("/dashboard", include_in_schema=False)
+async def dashboard() -> FileResponse:
+    """A local console for driving the engine by hand.
+
+    Served from the engine so it is same-origin: no CORS, no mixed content when
+    the engine is tunnelled over HTTPS, and no copy of the API key on disk.
+    """
+    return FileResponse(STATIC_DIR / "dashboard.html")
+
+
+@app.get("/", include_in_schema=False)
+async def root() -> RedirectResponse:
+    return RedirectResponse("/dashboard")
 
 
 @app.get("/health")

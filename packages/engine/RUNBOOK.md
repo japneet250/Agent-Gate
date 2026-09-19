@@ -43,7 +43,30 @@ Useful slices:
 
 ---
 
-## 2. Watch it run, narrated
+## 2. The console — see it working, click things
+
+```bash
+./venv/bin/uvicorn server:app --port 8000
+```
+
+Open **http://localhost:8000/dashboard**. If the engine has an API key set it
+asks for it once (that's `AGENTGATE_API_KEY` from `.env`), then:
+
+- **Left** — one-click scenarios: safe, dangerous, needs-a-human, plus a custom
+  tool/args box for anything you want to try.
+- **Middle** — the decision feed. Colour-coded, with the risk score, the policy
+  cited, the reasoning, latency, and a DEGRADED marker if a node fell back.
+- **Right** — live session counters with progress bars against each policy's
+  declared limit, and the full policy list showing every `Accumulate:` rule.
+
+**Press "Run 15 × $400 purchase orders".** Twelve go green while the spend bar
+climbs, then the thirteenth turns amber as the bar crosses $5,000. That is the
+whole product in one button.
+
+The console is served by the engine itself, so it works over the tunnel too —
+just open `<tunnel-url>/dashboard`.
+
+## 3. Watch it run, narrated
 
 ```bash
 ./venv/bin/python demo.py
@@ -84,7 +107,7 @@ pipeline — use that to prove the HTTP path works end to end.
 
 ---
 
-## 3. Run the service Person 1 calls
+## 4. Run the service Person 1 calls
 
 ```bash
 ./venv/bin/uvicorn server:app --port 8000
@@ -136,7 +159,7 @@ Interactive API docs, handy for showing a judge: **http://localhost:8000/docs**
 
 ---
 
-## 4. Watch cumulative state build up
+## 5. Watch cumulative state build up
 
 Fire orders at it and watch the running total climb:
 
@@ -159,7 +182,7 @@ curl -s -X POST localhost:8000/sessions/reset
 
 ---
 
-## 5. Prove the judgement, not just the plumbing
+## 6. Prove the judgement, not just the plumbing
 
 ```bash
 ./venv/bin/python test_live.py
@@ -179,7 +202,7 @@ measurement — don't quote these numbers as precision/recall.
 
 ---
 
-## 6. See inside the pipeline (LangFuse)
+## 7. See inside the pipeline (LangFuse)
 
 Add to the repo-root `.env`:
 
