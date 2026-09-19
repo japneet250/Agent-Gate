@@ -1,8 +1,14 @@
 import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
 import { resolveEvaluate } from '@agentgate/evals/engine';
+import {
+  captureError,
+  observeRun,
+  shutdownObservability,
+  startObservability,
+} from '@agentgate/observability';
 import { PERSONAS, type PersonaName, type RunMode } from './personas.js';
-import { runAgent, runScript, type RunResult } from './agent.js';
+import { runAgent, runScript, type RunResult, type StepLog } from './agent.js';
 import { passThroughGate, type ToolGate } from './gate.js';
 
 function arg(name: string, fallback?: string): string | undefined {
@@ -52,12 +58,28 @@ async function main() {
     gateLabel = kind === 'stub' ? 'stub engine' : 'real engine (P2)';
   }
 
+  const obs = startObservability('demo-agents');
   const sessionId = randomUUID();
+  console.log(
+    `observability: sentry=${obs.sentry ? 'on' : 'off'} langfuse=${obs.langfuse ? 'on' : 'off'}`,
+  );
   console.log(
     `\n=== ${persona.agentId} | mode=${mode} | gate=${gateLabel} | session=${sessionId.slice(0, 8)} ===\n`,
   );
 
-  const opts = { agentId: persona.agentId, server: persona.server, sessionId, gate };
+  const run = observeRun({
+    sessionId,
+    agentId: persona.agentId,
+    metadata: { persona: personaName, mode, gate: gateLabel, driver: flag('llm') ? 'llm' : 'script' },
+  });
+
+  const opts = {
+    agentId: persona.agentId,
+    server: persona.server,
+    sessionId,
+    gate,
+    onStep: (step: StepLog) => run.step(step.action, step.evaluation, step.output),
+  };
 
   const result = flag('llm')
     ? await runAgent({
@@ -67,11 +89,19 @@ async function main() {
       })
     : await runScript(opts, persona.scripts[mode]);
 
+  const counts = { allow: 0, escalate: 0, block: 0 };
+  for (const s of result.steps) counts[s.evaluation.decision]++;
+  run.end({ steps: result.steps.length, ...counts, finalMessage: result.finalMessage ?? null });
+
   if (flag('json')) console.log(JSON.stringify(result, null, 2));
   else summarise(result);
+
+  await shutdownObservability();
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
+  captureError(err, { service: 'demo-agents' });
   console.error(err);
+  await shutdownObservability();
   process.exit(1);
 });

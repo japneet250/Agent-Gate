@@ -6,6 +6,12 @@ import type { Decision, EvalResult } from '@agentgate/shared-types';
 import { resolveEvaluate, type EngineKind } from './engine/index.js';
 import { loadScenarios, materialise, type Scenario } from './scenarios.js';
 import { computeMetrics, DECISIONS, type Metrics } from './metrics.js';
+import {
+  captureError,
+  observeRun,
+  shutdownObservability,
+  startObservability,
+} from '@agentgate/observability';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const REPORT_PATH = path.join(here, '..', 'report.json');
@@ -82,6 +88,7 @@ function printFailures(rows: Row[], limit: number) {
 }
 
 async function main() {
+  const obs = startObservability('evals');
   const kindOverride = opt('engine') as EngineKind | undefined;
   const { evaluate, kind } = await resolveEvaluate(kindOverride);
   const scenarios = loadScenarios();
@@ -91,6 +98,17 @@ async function main() {
   console.log(
     `\nAgentGate eval harness — ${selected.length} scenarios, engine=${kind}${kind === 'stub' ? ' (stub: real engine not wired yet)' : ''}`,
   );
+  console.log(
+    `observability: sentry=${obs.sentry ? 'on' : 'off'} langfuse=${obs.langfuse ? 'on' : 'off'}`,
+  );
+
+  const suiteId = `evalsuite_${Date.now()}`;
+  const run = observeRun({
+    sessionId: suiteId,
+    agentId: 'eval-harness',
+    name: 'agentgate.eval.suite',
+    metadata: { engine: kind, scenarioCount: selected.length, category: only ?? 'all' },
+  });
 
   const rows: Row[] = [];
   const latencies: number[] = [];
@@ -103,6 +121,7 @@ async function main() {
       result = await evaluate(action, context);
     } catch (err) {
       // A throwing engine is a failure, not a crash -- score it and keep going.
+      captureError(err, { scenarioId: scenario.id, toolName: scenario.toolName });
       result = {
         riskScore: -1,
         decision: 'allow',
@@ -111,6 +130,7 @@ async function main() {
       };
     }
     latencies.push(result.latencyMs ?? Math.round(performance.now() - startedAt));
+    run.step(action, result);
     rows.push({
       scenario,
       result,
@@ -172,6 +192,14 @@ async function main() {
   writeFileSync(REPORT_PATH, `${JSON.stringify(report, null, 2)}\n`);
   console.log(`\nWrote ${path.relative(process.cwd(), REPORT_PATH)}`);
 
+  run.end({
+    accuracy: metrics.accuracy,
+    macroF1: metrics.macroF1,
+    weightedF1: metrics.weightedF1,
+    mismatches: metrics.total - metrics.correct,
+  });
+  await shutdownObservability();
+
   // --strict lets CI fail the build on a regression; off by default so the
   // harness stays usable while the real engine is still being built.
   const threshold = Number(opt('min-macro-f1') ?? 0);
@@ -181,7 +209,9 @@ async function main() {
   }
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
+  captureError(err, { service: 'evals' });
   console.error(err);
+  await shutdownObservability();
   process.exit(1);
 });

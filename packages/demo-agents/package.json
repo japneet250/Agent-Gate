@@ -19,7 +19,8 @@
     "openai": "^4.67.3",
     "zod": "^3.23.8",
     "zod-to-json-schema": "^3.23.3",
-    "@agentgate/evals": "*"
+    "@agentgate/evals": "*",
+    "@agentgate/observability": "*"
   },
   "devDependencies": {
     "@types/node": "^20.16.5",
