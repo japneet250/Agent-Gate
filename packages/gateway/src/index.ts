@@ -33,5 +33,5 @@ if (process.env.AGENTGATE_HTTP_PORT) {
   await startHttpServer(evaluate, { port, host, apiKey: process.env.AGENTGATE_API_KEY });
   console.error(`[agentgate] HTTP evaluate endpoint up on http://${host}:${port}/evaluate`);
 }
-console.error(`[agentgate] AI judge: ${judge ? process.env.ENGINE_URL : 'not configured (ENGINE_URL unset), unmatched calls are allowed'}`);
+console.error(`[agentgate] AI judge: ${judge ? 'configured' : 'NOT configured (AGENTGATE_ENGINE_URL unset): calls no rule catches are ALLOWED'}`);
 console.error(`[agentgate] proxy up, forwarding to: ${command} ${args.join(' ')}`);

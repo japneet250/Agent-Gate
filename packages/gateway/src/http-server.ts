@@ -10,6 +10,6 @@ await initSentryNode(process.env, 'http-server');
 const port = Number(process.env.AGENTGATE_HTTP_PORT ?? 3000);
 const host = process.env.AGENTGATE_HTTP_HOST ?? '127.0.0.1';
 const judge = judgeFromEnv();
-log(`AI judge: ${judge ? process.env.ENGINE_URL : 'not configured (ENGINE_URL unset), unmatched calls are allowed'}`);
+log(`AI judge: ${judge ? 'configured' : 'NOT configured (AGENTGATE_ENGINE_URL unset): calls no rule catches are ALLOWED'}`);
 await startHttpServer(createEvaluator(undefined, judge), { port, host, apiKey: process.env.AGENTGATE_API_KEY });
 log(`HTTP evaluate endpoint up on http://${host}:${port}/evaluate${process.env.AGENTGATE_API_KEY ? ' (API key required)' : ''}`);

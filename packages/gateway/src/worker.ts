@@ -11,7 +11,8 @@ import { configFromEnv } from './rules.js';
 //   DB                     D1 database (optional: without it nothing is logged and no policy is switchable)
 //   AGENTGATE_API_KEY      REQUIRED secret. Callers send `Authorization: Bearer <key>`.
 //   AGENTGATE_ALLOW_ANONYMOUS=1   skip the key requirement (local experiments only)
-//   ENGINE_URL             Person 2's AI judge (must be reachable from Cloudflare, so not localhost). Unset = no judge.
+//   AGENTGATE_ENGINE_URL   Person 2's AI judge, full URL (must be reachable from Cloudflare, so not localhost). Unset = NO judge, and
+//                          calls no rule catches are allowed (fail-open), so always set it. AGENTGATE_ENGINE_KEY = its bearer key. Both are secrets.
 //   AGENTGATE_BLOCKED_TOOLS, AGENTGATE_SPEND_LIMIT, AGENTGATE_RATE_LIMIT, AGENTGATE_RATE_WINDOW_MS   rule config
 
 interface Env {

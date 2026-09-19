@@ -201,6 +201,28 @@ The Worker refuses `/evaluate` (503) until `AGENTGATE_API_KEY` is set. For local
   creates `agentgate_sessions` (plus a Vectorize index), no name clash with `policies` / `action_logs`.
 - Tests: `src/engine.test.ts` (18 tests). Whole suite: 96 passing.
 
+### Step 3 update: wired to Person 2's LIVE engine (2026-09-19) — DONE and verified live
+Person 2's agent sent a spec for the live engine (a Cloudflare quick-tunnel to their laptop; the user confirmed the message was accurate and authorised the wiring).
+- **Client changes** (`src/engine.ts`): flat camelCase request `{ agentId, toolName, toolArgs, sessionId }` (was nested `{action, context}`), `Authorization: Bearer <key>`,
+  the URL may be the full `.../evaluate`. Config is now `AGENTGATE_ENGINE_URL` + `AGENTGATE_ENGINE_KEY` (`ENGINE_URL` still accepted). Keys never appear in code, logs,
+  verdicts or Sentry. Rules-first, fail-closed (`escalate`) and the 30s timeout were already in place; a 401 also fails closed.
+- **Extras kept**: `category`, `retrievedPolicies`, `patternNotes`, `guardrails`, `degraded` (a `Verdict` = `EvalResult` + extras + `decidedBy`). `decidedBy` is `rules`, `judge`, or
+  `fallback` (no judge configured, or judge unreachable/rejected). These also come back in our `/evaluate` reply.
+- **D1** (`migrations/0002_judge_details.sql`, applied to the live database): `action_logs` gains `tool_args`, `category`, `degraded`, `decided_by`, `retrieved_policies`,
+  `pattern_notes`, `guardrails`. Uses the existing database `4d29b4a2…`; the engine's `agentgate_sessions` table (25 rows) was not touched, and Vectorize was not touched.
+- **Deviation from their spec: `toolArgs` are stored REDACTED** (`src/redact.ts`): SSNs/cards/phones masked, emails keep only their domain, keys like password/token/secret/
+  api_key/authorization blanked, long values cut, 4000-char cap. Their spec asked for raw `toolArgs`; storing raw would put SSNs and card numbers in a table. Flip this only on purpose.
+- **Deployed** Worker `38f0e9bc`. Secrets on the Worker: `AGENTGATE_API_KEY`, `SENTRY_DSN`, `AGENTGATE_ENGINE_URL` (set by Claude, not a credential) and `AGENTGATE_ENGINE_KEY`
+  (pasted by the user; Claude does not enter keys). Before the key was set, the engine answered 401 and unmatched calls failed closed to `escalate`.
+- **VERIFIED LIVE through the deployed gateway** (real GPT judge, engine reachable, `retrieval: hybrid`):
+  1. `upload_file` of `/db/customers.sql` to `https://dropbox.com/u/xyz` -> `block`, risk 100, policy "Agent-Controlled Destinations", `decidedBy: judge`, category
+     `system_modification`, real reasoning, 3198ms. (Before: `allow` / "AI judge not connected yet".)
+  2. `send_email` with an SSN -> `block`, risk 95, `pii_detector`, `decidedBy: rules`, 0ms, engine not called. Fast path intact.
+  3. Both rows are in the live D1 `action_logs` with the new columns; `tool_args` are masked (`{"to":"***@gmail.com","body":"SSN [SSN]"}`), 0 raw SSNs/emails in the table.
+- Tests: 108 passing (new: auth header, flat payload, extras, `decidedBy`, 401 fail-closed, redaction, D1 columns). Also checked end to end locally with a key-protected stand-in engine.
+- Caveats: the tunnel dies when Person 2's laptop sleeps (then unmatched calls escalate); the engine has its own OpenAI cost per call; both the engine key and our gateway key were
+  pasted into chats, so rotate them after the demo.
+
 ### Hours 16-20 Step 4: Sentry (`packages/gateway`) — DONE: DSN set on the Worker and in .env; test event sent
 - `src/monitoring.ts`: tiny hook layer (`reportError`, `decisionBreadcrumb`, `scrubEvent`, `setMonitor`) with no Sentry import, so
   the same calls work in Node and on Workers. `sentry-node.ts` plugs `@sentry/node` in behind it for the MCP proxy and the local
@@ -291,7 +313,7 @@ Where what we built differs from `docs/STARTER_GUIDE.md`, and why. Newest last.
 - Scratch files in `~/aaryan/`: `agentgate-mcp.json`, `agentgate.log`, `cc-debug.log`, `cc-debug2.log`.
 
 ### Next
-- Step 3 for real: get Person 2's engine hosted (or run everything on one laptop), then set `ENGINE_URL`; try it with their OpenAI key.
+- Set `AGENTGATE_ENGINE_KEY` on the Worker, then run the two verification calls (Dropbox upload must `block`; SSN email must still block with no engine call).
 - Merge `person2/engine` with `aaryan` (see merge notes in Step 3).
 - Deploy the Worker: set the secret yourself (`npx wrangler secret put AGENTGATE_API_KEY`), then `npx wrangler deploy`. D1 is already live.
 - Step 4: give the Worker and `.env` the Sentry DSN, then run `npm run sentry:check -w packages/gateway`.

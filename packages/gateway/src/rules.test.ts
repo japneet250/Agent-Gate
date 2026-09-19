@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { AgentAction } from '@agentgate/shared';
-import { DEFAULT_CONFIG, configFromEnv, createRuleEngine, type RulesConfig } from './rules.js';
+import { DEFAULT_CONFIG, configFromEnv, createRuleEngine, maskPii, type RulesConfig } from './rules.js';
 import { createEvaluator } from './evaluate.js';
 
 let n = 0;
@@ -230,5 +230,15 @@ describe('evaluator', () => {
     }
     const worst = Math.max(...times);
     assert.ok(worst < 10, `slowest verdict took ${worst.toFixed(2)}ms`);
+  });
+});
+
+describe('maskPii', () => {
+  it('masks SSNs, cards, phones and email local parts, leaving the rest', () => {
+    assert.equal(maskPii('ssn 123-45-6789 and 000-12-3456'), 'ssn [SSN] and 000-12-3456');
+    assert.equal(maskPii('card 4111 1111 1111 1111, other 4111 1111 1111 1112'), 'card [CARD], other 4111 1111 1111 1112');
+    assert.equal(maskPii('call (416) 555-0199 or 416-555-0199'), 'call [PHONE] or [PHONE]');
+    assert.equal(maskPii('mail jo.smith@gmail.com now'), 'mail ***@gmail.com now');
+    assert.equal(maskPii('order 1234567890 on 2026-09-19'), 'order 1234567890 on 2026-09-19');
   });
 });

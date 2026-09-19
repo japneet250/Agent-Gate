@@ -106,8 +106,19 @@ const PHONE = /(?:\+\d{1,3}[\s.-]?)?(?:\(\d{3}\)\s?|\b\d{3}[\s.-])\d{3}[\s.-]\d{
 const EMAIL_FIELDS = /^(to|cc|bcc|from|sender|reply_?to|recipients?|e-?mail(_?address)?)$/i;
 const PHONE_FIELDS = /^(phone(_?number)?|tel(ephone)?|mobile|cell)$/i;
 
-const validSsn = (m: RegExpMatchArray) =>
-  m[1] !== '000' && m[1] !== '666' && m[1][0] !== '9' && m[2] !== '00' && m[3] !== '0000';
+const ssnValid = (area: string, group: string, serial: string) =>
+  area !== '000' && area !== '666' && area[0] !== '9' && group !== '00' && serial !== '0000';
+const validSsn = (m: RegExpMatchArray) => ssnValid(m[1], m[2], m[3]);
+const cardValid = (digits: string) => /^[2-6]/.test(digits) && luhnValid(digits);
+
+/** Replaces PII in free text with placeholders (an email keeps its domain). Used before anything is written to the audit log. */
+export function maskPii(text: string): string {
+  return text
+    .replace(SSN, (m, a: string, b: string, c: string) => (ssnValid(a, b, c) ? '[SSN]' : m))
+    .replace(CARD, (m) => (cardValid(m.replace(/\D/g, '')) ? '[CARD]' : m))
+    .replace(EMAIL, (m) => `***@${m.split('@').pop()}`)
+    .replace(PHONE, '[PHONE]');
+}
 
 const piiDetector: Rule = {
   name: 'pii_detector',
@@ -121,7 +132,7 @@ const piiDetector: Rule = {
       for (const m of text.matchAll(SSN)) if (validSsn(m)) add('SSN', 95, f.path);
       for (const m of text.matchAll(CARD)) {
         const digits = m[0].replace(/\D/g, '');
-        if (/^[2-6]/.test(digits) && luhnValid(digits)) add('credit card number', 95, f.path);
+        if (cardValid(digits)) add('credit card number', 95, f.path);
       }
       if (!EMAIL_FIELDS.test(f.key) && text.match(EMAIL)) add('email address', 40, f.path);
       if (!PHONE_FIELDS.test(f.key) && text.match(PHONE)) add('phone number', 40, f.path);

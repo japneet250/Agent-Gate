@@ -1,5 +1,7 @@
-import type { AgentAction, EvalResult } from '@agentgate/shared';
+import type { AgentAction } from '@agentgate/shared';
+import type { Verdict } from './evaluate.js';
 import { reportError } from './monitoring.js';
+import { redactArgs } from './redact.js';
 
 // Minimal shape of a Cloudflare D1 binding (just what we use), so we don't need the Workers type package.
 export interface D1Like {
@@ -33,13 +35,16 @@ export function createPolicyCache(db: D1Like | undefined, ttlMs = 15_000, now: (
   };
 }
 
-/** Writes one row to `action_logs`. Argument values are not stored, only their names. */
-export async function insertActionLog(db: D1Like, action: AgentAction, result: EvalResult): Promise<void> {
+const json = (v: unknown[] | undefined) => (v === undefined ? null : JSON.stringify(v).slice(0, 4000));
+
+/** Writes one row to `action_logs`. Tool arguments are stored redacted (see redact.ts), never raw. */
+export async function insertActionLog(db: D1Like, action: AgentAction, result: Verdict): Promise<void> {
   await db
     .prepare(
       `INSERT INTO action_logs
-         (id, action_id, created_at, agent_id, session_id, tool_name, arg_keys, decision, risk_score, reasoning, violated_policy, latency_ms)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, action_id, created_at, agent_id, session_id, tool_name, arg_keys, tool_args, decision, risk_score, reasoning,
+          violated_policy, latency_ms, category, degraded, decided_by, retrieved_policies, pattern_notes, guardrails)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       crypto.randomUUID(),
@@ -49,11 +54,18 @@ export async function insertActionLog(db: D1Like, action: AgentAction, result: E
       action.sessionId,
       action.toolName,
       JSON.stringify(Object.keys(action.toolArgs)),
+      redactArgs(action.toolArgs),
       result.decision,
       result.riskScore,
       result.reasoning,
       result.violatedPolicy ?? null,
       result.latencyMs,
+      result.category ?? null,
+      result.degraded ? 1 : 0,
+      result.decidedBy ?? 'rules',
+      json(result.retrievedPolicies),
+      json(result.patternNotes),
+      json(result.guardrails),
     )
     .run();
 }

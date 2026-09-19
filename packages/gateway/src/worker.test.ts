@@ -69,17 +69,33 @@ describe('policies table -> rule switches', () => {
 });
 
 describe('audit log', () => {
-  it('stores the decision and argument NAMES, never the values', async () => {
+  it('stores the decision, redacted args and the judge extras, never raw PII', async () => {
     const { db, writes } = fakeDb();
     await insertActionLog(db, action('send_email', { body: 'SSN 123-45-6789', to: 'a@b.com' }), {
       riskScore: 95, decision: 'block', reasoning: 'PII detected: SSN in "body"', violatedPolicy: 'pii_detector', latencyMs: 0.3,
     });
     const { values } = writes[0];
     assert.ok(!JSON.stringify(values).includes('123-45-6789'));
+    assert.ok(!JSON.stringify(values).includes('a@b.com'));
     assert.ok(values.includes('["body","to"]'));
+    assert.ok(values.includes('{"body":"SSN [SSN]","to":"***@b.com"}'), 'redacted args are stored'); 
     assert.ok(values.includes('block') && values.includes('pii_detector') && values.includes('2026-09-19T12:00:00.000Z'));
     assert.notEqual(values[0], 'act-1', 'the row id is server-generated, not the caller-supplied action id');
     assert.equal(values[1], 'act-1');
+  });
+
+  it('records who decided and the engine extras', async () => {
+    const { db, writes } = fakeDb();
+    await insertActionLog(db, action('upload_file', { destination: 'https://dropbox.com/u/x' }), {
+      riskScore: 100, decision: 'block', reasoning: 'unapproved destination', violatedPolicy: 'Agent-Controlled Destinations', latencyMs: 9577,
+      category: 'system_modification', retrievedPolicies: [{ name: 'Agent-Controlled Destinations', score: 0.37 }], patternNotes: [], guardrails: [], degraded: false, decidedBy: 'judge',
+    });
+    const { sql, values } = writes[0];
+    for (const col of ['tool_args', 'category', 'degraded', 'decided_by', 'retrieved_policies', 'pattern_notes', 'guardrails']) assert.ok(sql.includes(col), col);
+    assert.equal((sql.match(/\?/g) ?? []).length, values.length, 'one placeholder per bound value');
+    assert.ok(values.includes('judge') && values.includes('system_modification'));
+    assert.ok(values.includes('[{"name":"Agent-Controlled Destinations","score":0.37}]'));
+    assert.ok(values.includes(0), 'degraded = 0');
   });
 
   it('never changes or delays the decision, even if recording fails', async () => {
