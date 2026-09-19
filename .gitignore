@@ -22,3 +22,7 @@ __pycache__/
 
 # local tooling (cloudflared binary)
 .tools/
+
+# ---- merged from Person 1's branch ----
+*.pyc
+.dev.vars
