@@ -104,11 +104,13 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export async function withRetry<T>(fn: () => Promise<T>, options = DEFAULT_RETRY): Promise<T> {
   let lastErr: unknown;
 
+  let used = 0;
   for (let attempt = 1; attempt <= options.attempts; attempt++) {
     try {
       return await fn();
     } catch (err) {
       lastErr = err;
+      used = attempt;
       if (!isRetryable(err) || attempt === options.attempts) break;
 
       const backoff = Math.min(options.baseDelayMs * 2 ** (attempt - 1), options.maxDelayMs);
@@ -121,10 +123,13 @@ export async function withRetry<T>(fn: () => Promise<T>, options = DEFAULT_RETRY
   }
 
   const status = httpStatusOf(lastErr);
+  // Report attempts actually made, not the budget. A non-retryable error breaks
+  // out after one try, and saying "gave up after 4 attempts" for a 404 sends
+  // whoever reads it hunting for a rate limit that was never there.
   throw new JudgeUnavailable(
-    `gave up after ${options.attempts} attempt(s)${status ? ` (last status ${status})` : ''}: ${
+    `gave up after ${used} attempt(s)${status ? ` (last status ${status})` : ''}: ${
       (lastErr as Error)?.message ?? 'unknown error'
     }`,
-    options.attempts,
+    used,
   );
 }
