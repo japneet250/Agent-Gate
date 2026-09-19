@@ -462,6 +462,32 @@ join is a reconstruction, not what the judge provably saw.
 
 ---
 
+### DeepEval cross-check (P3)
+
+`packages/evals/frameworks/deepeval/` — a second, independent framework scoring
+the **same scenarios and the same engine decisions**. It answers one question:
+does an off-the-shelf framework agree with our custom harness?
+
+```bash
+cd packages/evals/frameworks/deepeval && ./setup.sh
+./venv/bin/python run_deepeval.py        # offline, no API spend, no engine needed
+```
+
+**Result: 71/100 = 71.0%, exactly matching the harness's 71.0%. The frameworks
+AGREE.** That is a property of the harnesses, not of the engine's calibration,
+so it holds regardless of the D1–D4 reconciliation.
+
+It is **not** a second accuracy number and must not be quoted as one. On
+disagreement it exits non-zero and names the gap rather than averaging.
+Decision correctness is deterministic rather than LLM-scored — it is a
+three-way classification against a fixed label, and a judge there would add
+variance to the one number that should have none. `--geval` adds an LLM-scored
+*reasoning quality* metric, which is genuinely subjective, and costs money.
+
+Offline mode scores only rows the harness marked `scored`; `invalid` and
+`skipped` rows are plumbing failures and counting them would reintroduce the
+bias the TS harness buckets away.
+
 ### Next up
 
 Done: mock servers, demo agents, eval harness, Sentry (errors + tracing + logs),
@@ -508,3 +534,6 @@ _Append-only. Format: `- [HH:MM] (Px) <what changed / decided / impact>`_
 - [19:32] (P3) **The headline weakness is not the threshold, it is that the engine almost never escalates** — 3 of 100 scenarios, escalate recall 9.1%, 18 of 29 mismatches are escalate->block. P2's policy prose says over-limit transactions "must be escalated to a human reviewer" while `block_at=70` blocks them; the prose and the pipeline disagree with each other. **P2 — this is the blocker, above the threshold.**
 - [19:33] (P3) **Correction to my [17:58] line:** I said the procurement demo would fire the cumulative alert at half the intended spend and look correct on stage. It does not fire **at all** — replayed live, all six actions block on the $500 rule, `total_spend` stays $0. The double-count is real (measured: a $400 PO + its $400 payment books $800) but currently masked, and becomes active the moment the limit moves to $10,000.
 - [19:34] (P3) **RAGAS blocked on P2 (low priority):** `/evaluate` returns `retrievedPolicies` as name+score only, no context text, so context-relevancy and faithfulness have nothing to score. The engine holds it in `RetrievedPolicy.text` but does not serialise it. P3 can join names to the in-repo policy `.md` files as a workaround, but that is a reconstruction rather than what the judge provably saw.
+- [19:50] (P3) **Baseline rebuilt and reproduced identically three times: 71.0% accuracy / macro-F1 0.584, escalate recall 9.1%, 100/100 scored, zero degraded.** No P3-side changes were made, so the number cannot move until P2 acts on the action items above. Useful side finding: an LLM-judge pipeline reproducing exactly across three runs is a real stability signal.
+- [19:51] (P3) **DeepEval cross-check added** (`packages/evals/frameworks/deepeval/`, own venv). Scores the same scenarios and the same engine decisions: **71/100 = 71.0%, exactly matching the custom harness — the frameworks AGREE.** Offline by default (reads report.json, no API spend, no engine needed). It is a harness-validation artifact, **not a second accuracy number**; on disagreement it exits non-zero rather than averaging.
+- [19:52] (P3) **`main`'s `.gitignore` was missing the eval-report ignore lines** — they were added on `person3` and never propagated, so on `main` report.json/.by-model/.failed showed as ordinary untracked files, one `git add -A` from being committed to the branch everyone pulls. Fixed on `main`.
