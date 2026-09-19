@@ -11,6 +11,7 @@
 import { createServer } from 'node:http';
 import { gunzipSync } from 'node:zlib';
 import { spawn } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -204,6 +205,11 @@ async function main() {
     ]),
     await run('evals', [
       'run', 'eval', '-w', '@agentgate/evals', '--', '--category=dangerous',
+      // This is a throwaway run that exists to make the harness emit telemetry.
+      // Without --report it overwrites packages/evals/report.json, which is the
+      // regression baseline -- and a --model=engine baseline is expensive to
+      // rebuild. --no-history keeps it out of the Mongo run log too.
+      `--report=${path.join(tmpdir(), 'agentgate-verify-report.json')}`, '--no-history',
     ]),
   ];
 

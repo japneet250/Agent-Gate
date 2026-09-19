@@ -32,9 +32,6 @@ import {
 } from './regression.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const REPORT_PATH = path.join(here, '..', 'report.json');
-const BY_MODEL_PATH = path.join(here, '..', 'report.by-model.json');
-const FAILED_REPORT_PATH = path.join(here, '..', 'report.failed.json');
 
 const argv = process.argv.slice(2);
 const flag = (n: string) => argv.includes(`--${n}`);
@@ -42,6 +39,19 @@ const opt = (n: string) => {
   const hit = argv.find((a) => a.startsWith(`--${n}=`));
   return hit ? hit.split('=').slice(1).join('=') : undefined;
 };
+
+// --report=<path> redirects every artifact this run writes. Anything that runs
+// the harness as a side effect of testing something else -- the observability
+// verifier does exactly this -- must pass it, or a throwaway run silently
+// overwrites report.json and destroys the regression baseline. That happened:
+// `npm run verify -w @agentgate/observability` replaced a --model=engine
+// product baseline with a stub run of the dangerous category.
+const reportBase = opt('report');
+const REPORT_PATH = reportBase ? path.resolve(reportBase) : path.join(here, '..', 'report.json');
+const withSuffix = (suffix: string) =>
+  REPORT_PATH.replace(/\.json$/, `.${suffix}.json`);
+const BY_MODEL_PATH = reportBase ? withSuffix('by-model') : path.join(here, '..', 'report.by-model.json');
+const FAILED_REPORT_PATH = reportBase ? withSuffix('failed') : path.join(here, '..', 'report.failed.json');
 const numOpt = (n: string, fallback: number) => {
   const raw = opt(n);
   const parsed = raw === undefined ? NaN : Number(raw);
@@ -64,6 +74,7 @@ function usage(): never {
       '  --no-baseline         ignore the previous report.json',
       '  --update-baseline     accept this run as the new baseline even if it failed',
       '  --no-history          skip recording this run to MongoDB',
+      '  --report=<path>       write artifacts here instead of report.json',
     ].join('\n'),
   );
   process.exit(1);
