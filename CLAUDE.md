@@ -30,14 +30,23 @@ balloons past its obvious scope, stop and ask.
 
 ## Branch model — easy to get wrong
 
-- **Code → `person3`.** This is the working branch and where everything below runs.
-- **`SHARED_CONTEXT.md` → `main` only.** It is the team's doc; teammates pull it
-  without merging P3 code. It is *not* present on `person3` — to read it:
-  `git show main:SHARED_CONTEXT.md`. To edit it, check out `main`, edit, commit,
-  and check `person3` back out.
+- **Everything → `person3`.** Code *and* `SHARED_CONTEXT.md` both live on this
+  branch. There is no branch-switching dance any more.
+- **Do NOT push to `main`.** `main` is deliberately kept at the upstream initial
+  commit (LICENSE + README) until the team integrates everything and merges it
+  as one reviewed step. Nothing goes there piecemeal — not code, not docs, not
+  config. If something feels like it belongs on `main`, it belongs on an
+  integration branch first, and that is the user's call to make, not yours.
+- `SHARED_CONTEXT.md` used to be main-only so teammates could pull it without
+  our code. That rule is retired — it meant every doc edit round-tripped
+  through `main`, which is how `report.json` (tracked on `main`, ignored on
+  `person3`) got clobbered twice and cost two full re-baseline runs.
 - Only ever touch the `## Person 3` section and append to the `## Decisions Log`
   (append-only — never edit another person's line).
-- There is **no git remote**. Nothing has been pushed. Ask before adding one.
+- **Remote:** `origin` = https://github.com/japneet250/Agent-Gate.git.
+  Branches: `person3` (ours), `aaryan` (P1), `person2/engine` + `integration/p2-p3` (P2).
+  **Never merge P1's or P2's feature code into `person3` without asking** —
+  report what landed and flag anything touching our contracts.
 - Never force-push. Small, frequent commits.
 
 ## Commands
