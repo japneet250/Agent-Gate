@@ -14,10 +14,23 @@ export function configuredMode(): DataMode {
   return process.env.NEXT_PUBLIC_DATA_MODE === 'live' ? 'live' : 'mock';
 }
 
-/** One provider per browser session. Swapping mode is a reload, not a hot swap —
- *  a half-live/half-mock feed would be impossible to reason about on stage. */
+/**
+ * One provider per browser session. Swapping mode is a reload, not a hot swap —
+ * a half-live/half-mock feed would be impossible to reason about on stage.
+ *
+ * Browser-only on purpose. A module-level singleton on the server is shared
+ * across every request in that Node process, so any state it accumulated would
+ * leak into server-rendered HTML that the client then disagrees with — a
+ * hydration mismatch that only shows up under load. On the server this returns
+ * a provider with no state and no timers, so SSR output is always the empty
+ * feed and always matches the client's first render.
+ */
 let singleton: DataProvider | null = null;
 export function getProvider(): DataProvider {
+  if (typeof window === 'undefined') {
+    // Fresh, inert instance per server render. Never started, never subscribed.
+    return configuredMode() === 'live' ? new LiveProvider() : new MockProvider();
+  }
   if (!singleton) {
     singleton = configuredMode() === 'live' ? new LiveProvider() : new MockProvider();
   }
@@ -35,10 +48,18 @@ const MAX_ROWS = 60;
 
 export function useActionFeed() {
   const provider = useMemo(getProvider, []);
-  const [actions, setActions] = useState<EvaluatedAction[]>(() => [...provider.history()].reverse());
+  // Always start empty so the server's HTML and the client's first render are
+  // identical. Existing history is adopted in the effect below, after
+  // hydration has already succeeded. Seeding from provider.history() during
+  // render is what makes a returning navigation mismatch.
+  const [actions, setActions] = useState<EvaluatedAction[]>([]);
   const [running, setRunning] = useState(false);
 
   useEffect(() => {
+    // Adopt whatever the singleton already saw (e.g. after client-side nav).
+    const existing = provider.history();
+    if (existing.length) setActions([...existing].reverse().slice(0, MAX_ROWS));
+
     const unsubscribe = provider.subscribe((a) => {
       setActions((prev) => {
         const next = [a, ...prev];
