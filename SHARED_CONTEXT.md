@@ -162,14 +162,69 @@ known gaps, which the real engine should pick up: it misses `rm -rf ~/` and fork
 bombs, treats `GRANT ALL` as a mere schema change, and can't tell a $10,000
 payment that should escalate from one that should block.
 
+**Model comparison (`--model=`).** The harness is model-parametrized:
+
+```bash
+npm run eval -w @agentgate/evals -- --model=stub,engine     # rules vs P2's engine
+npm run eval -w @agentgate/evals -- --model=openai,gemini   # dual-model headline stat
+```
+
+One provider-agnostic prompt (`src/models/prompt.ts`) goes byte-for-byte through
+both providers, each using its own structured-output mechanism (OpenAI
+`json_schema`, Gemini `responseSchema`), so the model is the only variable.
+`npm run verify:judge -w @agentgate/evals` asserts that against local mock
+endpoints — no API spend. Two or more models also writes `report.by-model.json`
+with per-model metrics and every scenario where they disagreed.
+
+Model ids come from `OPENAI_JUDGE_MODEL` / `GEMINI_JUDGE_MODEL`; a missing API
+key skips that model with a warning instead of failing the run.
+
+**⚠️ P2 — one contract question.** For a fair comparison I need to pin the
+deciding model. Proposed, not yet applied:
+
+```ts
+evaluate(action: AgentAction, context: SessionContext, opts?: { model?: string }): Promise<EvalResult>
+```
+
+Until you confirm, the comparison runs through a P3-owned judge wrapper that
+bypasses your pipeline entirely. If you adopt the option, the comparison moves
+behind `evaluate()` and my wrapper goes away. See `EvaluateOptions` in
+`packages/evals/src/engine/index.ts`.
+
+**Regression mode — the team's safety net. Run this before you push.**
+
+```bash
+npm run eval -w @agentgate/evals -- --strict                # exit 1 on regression
+npm run eval -w @agentgate/evals -- --update-baseline       # accept new numbers
+```
+
+Every run diffs against the previous `report.json`: a macro-F1 floor (0.8), a
+per-class recall floor (0.7) and a max drop vs the last run (0.05), all
+configurable. It names every scenario that flipped, marked `fixed` or `BROKEN`.
+A scenario-set hash stops it comparing runs scored on different inputs, and a
+failing run does **not** overwrite the baseline — it parks in
+`report.failed.json` so one bad commit cannot quietly reset the bar.
+
+**P2: this is what catches a prompt change breaking things.** Verified by
+deliberately weakening a stub rule: it named all 6 broken scenarios and exited 1.
+
+**Eval run history (MongoDB Atlas).** Each run is persisted — timestamp, model,
+per-class precision/recall/F1, confusion matrix, scenario hash, report path,
+pass/fail. Set `MONGODB_URI`; without it the run warns and carries on.
+**Scope: P3 eval runs only — agent action logs belong in P1's D1 store, not here.**
+
 **`packages/observability` — Sentry + LangFuse (READY).**
 
 Both no-op without keys, so nothing breaks offline.
 
-- **Sentry:** one `agentgate.evaluate` breadcrumb per evaluation (tool, args,
-  decision, riskScore, violatedPolicy, latency), a warning event per `block`,
-  and captured `uncaughtException` / `unhandledRejection`. Wired into both the
-  demo-agent CLI and the eval harness.
+- **Sentry (Errors + Tracing + Logs):** an `agentgate.evaluate` breadcrumb per
+  evaluation, a warning event per `block`, captured `uncaughtException` /
+  `unhandledRejection`, **a span per evaluation** carrying decision, riskScore,
+  toolName, path (`rule` | `judge`) and latencyMs under a root span per run, and
+  **structured Logs** for every block/escalate reason. Wired into both the
+  demo-agent CLI and the eval harness. SDK is `@sentry/node` v10.
+- **LangFuse scores:** every scored scenario attaches a `decision_correctness`
+  score to its span, so traces are self-evaluating.
 - **LangFuse span tree** — **P1/P2 please use these exact names:**
 
 ```
@@ -189,7 +244,10 @@ npm run verify -w @agentgate/observability   # proves both actually emit
 ```
 
 That spins up a local collector speaking both ingest protocols and runs a real
-agent run + eval run against it — no live keys needed. Both currently PASS.
+agent run + eval run against it — no live keys needed. It asserts breadcrumbs,
+**transactions with span attributes**, **logs**, LangFuse spans and scores.
+Both processes currently PASS (demo-agents: 4 spans / 3 logs; evals: 30 spans /
+28 logs / 30 scores).
 
 ### What I depend on
 
@@ -197,11 +255,22 @@ agent run + eval run against it — no live keys needed. Both currently PASS.
 - P1: gateway spawnable as an MCP stdio server, so the agents can point at it unchanged.
 - P2: LangFuse span names, so P3's agent-side trace nests inside P2's engine trace instead of duplicating it.
 
+### Known constraints
+
+- **We are on Node 18.20.5.** Several current SDKs now require Node >= 20
+  (`mongodb` v7 does; pinned to v6 here). Worth agreeing whether the team
+  upgrades before someone hits it harder than I did.
+- `langfuse` v3 is what we use; there is a newer OTel-based `@langfuse/client`
+  v5. Not migrating mid-hackathon — v3 works and the span names above are stable.
+- The OpenAI and Gemini judges are wiring-verified against mock endpoints but
+  have **not** been run against the live APIs (no keys on my machine). Model ids
+  in `.env.example` are placeholders to confirm before the demo.
+
 ### Next up
 
-Deliverables 1–4 are done. Stretch only: DeepEval wrapper over the same
-scenarios, OpenTelemetry spans, RAGAS on P2's RAG. Say the word if you'd rather
-I spend the time on the demo script or on widening the scenario set.
+Done: mock servers, demo agents, eval harness, Sentry (errors + tracing + logs),
+LangFuse (tracing + scores), dual-model comparison, regression mode, Mongo
+history. Stretch, not started: CSE Log & Order, GPTZero, DeepEval, RAGAS.
 
 ---
 
@@ -216,3 +285,8 @@ _Append-only. Format: `- [HH:MM] (Px) <what changed / decided / impact>`_
 - [05:40] (P3) Eval harness READY: 100 labelled scenarios, per-class precision/recall/F1 + confusion matrix + `report.json`. Stub baseline accuracy 91% / macro-F1 0.895 — P2, that's the bar.
 - [05:52] (P3) Added `packages/observability` (P3-owned): Sentry breadcrumbs + LangFuse tracing, both no-op without keys. **P1/P2: use the `SPAN` constants; P2 nest engine spans under `agentgate.evaluate`.** Verified actually emitting via a local collector (`npm run verify -w @agentgate/observability`).
 - [05:53] (P3) Cumulative spend accounting agreed as: book spend on `approve_payment` only, and only when the decision was `allow` — otherwise a PO plus its payment double-counts. P2: match this in the pattern detector or tell me to change it.
+- [10:05] (P3) Sentry deepened to **Errors + Tracing + Logs** (`@sentry/node` v8 -> v10): span per evaluation with decision/risk/tool/path/latency, structured Logs for block/escalate. LangFuse traces now carry a `decision_correctness` score per scenario. Verifier asserts all of it.
+- [10:06] (P3) **P2 — contract question:** proposed `evaluate(action, context, opts?: { model?: string })` so the harness can pin the deciding model. Not applied; comparison currently bypasses your pipeline via a P3-owned judge wrapper. Confirm or reject. See `EvaluateOptions` in `packages/evals/src/engine/index.ts`.
+- [10:07] (P3) Harness is model-parametrized: `--model=stub,engine,openai,gemini`, one byte-identical prompt across providers, `report.by-model.json` + disagreement list.
+- [10:08] (P3) **Regression mode live — run `npm run eval -w @agentgate/evals -- --strict` before pushing.** Floors + max-delta vs last run, names every flipped scenario, and a failing run never overwrites the baseline. P2: this is what will catch a prompt change breaking things.
+- [10:09] (P3) MongoDB Atlas eval-run history added (P3 eval runs only — **action logs stay in P1's D1 store**). Pinned `mongodb` v6: **v7 needs Node >=20.19 and we are on Node 18** — worth a team decision on upgrading.
