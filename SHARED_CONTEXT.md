@@ -57,6 +57,27 @@ type SessionContext = { sessionId: string; recentActions: AgentAction[]; cumulat
 **Risk thresholds** (exported as `RISK_THRESHOLDS` / `decisionForRiskScore`):
 `0–30 → allow`, `30–70 → escalate`, `70–100 → block`.
 
+### Pinned versions — P1/P2 please match these
+
+Drift here is the most likely cause of a merge that installs for one of us and
+not the others. Run **`npm run doctor`** to check yourself in one command.
+
+| what | pinned | why |
+| --- | --- | --- |
+| **Node** | **18.20.5** (`.nvmrc`, `engines.node`) | what the repo actually runs on today |
+| `@sentry/node` | v10 | `enableLogs` is top-level and `Sentry.logger` exists only from v10 |
+| `@google/genai` | v2 | current Gemini SDK; `@google/generative-ai` is legacy |
+| `mongodb` | v6 | **v7 requires Node >= 20.19** |
+| `langfuse` | v3 | v5 is the newer OTel-based `@langfuse/client`; not migrating mid-hackathon |
+| `openai` | v4 | works; v7 exists but nothing needs it yet |
+
+**⚠️ Known conflict:** `@google/genai` v2 declares `node >= 20.0.0`. It runs fine
+on 18 (verified), but it is an unsupported runtime and only `@google/genai@1.0.x`
+supports Node 18 — which is too old to be worth using. `engine-strict` is
+deliberately **off** in `.npmrc`, because turning it on blocks `npm install` for
+everyone. **If we want to be on a supported runtime, the team should move to
+Node 20** — flagging it rather than deciding it alone.
+
 ---
 
 ## Person 1 — MCP Gateway
@@ -162,6 +183,12 @@ known gaps, which the real engine should pick up: it misses `rm -rf ~/` and fork
 bombs, treats `GRANT ALL` as a mere schema change, and can't tell a $10,000
 payment that should escalate from one that should block.
 
+**⚠️ Only `--model=engine` produces AgentGate's score.** Every report carries an
+`isProductNumber` flag that is true *only* for that run. The stub and the P3
+judge wrapper are eval-engineering artifacts — they measure a rule table and two
+judge models, not the product. Any other run prints a loud `NOT A PRODUCT NUMBER`
+banner. **Nothing else goes on stage or in the README.**
+
 **Model comparison (`--model=`).** The harness is model-parametrized:
 
 ```bash
@@ -178,6 +205,29 @@ with per-model metrics and every scenario where they disagreed.
 
 Model ids come from `OPENAI_JUDGE_MODEL` / `GEMINI_JUDGE_MODEL`; a missing API
 key skips that model with a warning instead of failing the run.
+
+**Live-hardening (done before spending any quota).** A judge can fail in ways
+that say nothing about its judgement, and scoring those as wrong decisions would
+libel a provider. Three buckets are now tracked separately and printed:
+
+- `scored` — produced a conforming decision. **Only these reach the metrics.**
+- `invalid` — output did not conform to the requested schema. OpenAI's strict
+  `json_schema` and Gemini's `responseSchema` accept different JSON-Schema
+  subsets, so this is a plumbing failure, never a wrong answer.
+- `skipped` — never resolved after bounded exponential backoff (jittered,
+  honours `Retry-After`) on 429/408/5xx/timeout. Gemini free-tier RPM caps make
+  this common and it is not a quality signal.
+
+The OpenAI client is pinned to `maxRetries: 0` — the SDK retries twice by
+default, which would compound with ours into up to 8 requests per scenario.
+
+**Honest labelling.** `comparisonLabel()` is built from the exact model ids that
+actually ran, so a `gpt-4o-mini` vs `gemini-2.5-flash` run **cannot** be written
+up as "GPT-4o vs Gemini". Comparing different size tiers prints a `TIER MISMATCH`
+warning. The **disagreement list is the headline output** — for each scenario
+where the models differ, both decisions and which matched our label — and the
+aggregate percentages are explicitly secondary. The horserace invites a fairness
+argument we cannot fully win; the disagreements are the defensible artifact.
 
 **⚠️ P2 — one contract question.** For a fair comparison I need to pin the
 deciding model. Proposed, not yet applied:
@@ -262,15 +312,35 @@ Both processes currently PASS (demo-agents: 4 spans / 3 logs; evals: 30 spans /
   upgrades before someone hits it harder than I did.
 - `langfuse` v3 is what we use; there is a newer OTel-based `@langfuse/client`
   v5. Not migrating mid-hackathon — v3 works and the span names above are stable.
-- The OpenAI and Gemini judges are wiring-verified against mock endpoints but
-  have **not** been run against the live APIs (no keys on my machine). Model ids
-  in `.env.example` are placeholders to confirm before the demo.
+- The OpenAI and Gemini judges are wiring-verified against mock endpoints
+  (`npm run verify:judge`, 20 checks) but have **not** been run against the live
+  APIs — there is no `.env` on my machine. Model ids in `.env.example` are
+  defaults to confirm before the demo.
+- Sentry and LangFuse are transport-verified against a local collector
+  (`npm run verify`) but **not** against the real backends, for the same reason.
+
+### Blocked on P2 — the re-baseline run
+
+Every baseline in `report.json` so far is the **stub**, and every model number is
+the **P3 judge wrapper**. Both are superseded the moment P2's engine lands.
+
+The moment `@agentgate/engine` exports `evaluate`, run exactly this:
+
+```bash
+npm run eval -w @agentgate/evals -- --model=engine --update-baseline
+```
+
+That resets the regression baseline against the real engine and is **the only
+run whose number may be quoted as AgentGate's score**. Checked just now:
+`packages/engine` does not exist yet, and `--model=engine` correctly refuses to
+run rather than silently scoring the stub under the engine's name.
 
 ### Next up
 
 Done: mock servers, demo agents, eval harness, Sentry (errors + tracing + logs),
-LangFuse (tracing + scores), dual-model comparison, regression mode, Mongo
-history. Stretch, not started: CSE Log & Order, GPTZero, DeepEval, RAGAS.
+LangFuse (tracing + scores), dual-model comparison + live-hardening, regression
+mode, Mongo history, version pins, product-number guard.
+Stretch, not started: CSE Log & Order, GPTZero, DeepEval, RAGAS.
 
 ---
 
@@ -290,3 +360,9 @@ _Append-only. Format: `- [HH:MM] (Px) <what changed / decided / impact>`_
 - [10:07] (P3) Harness is model-parametrized: `--model=stub,engine,openai,gemini`, one byte-identical prompt across providers, `report.by-model.json` + disagreement list.
 - [10:08] (P3) **Regression mode live — run `npm run eval -w @agentgate/evals -- --strict` before pushing.** Floors + max-delta vs last run, names every flipped scenario, and a failing run never overwrites the baseline. P2: this is what will catch a prompt change breaking things.
 - [10:09] (P3) MongoDB Atlas eval-run history added (P3 eval runs only — **action logs stay in P1's D1 store**). Pinned `mongodb` v6: **v7 needs Node >=20.19 and we are on Node 18** — worth a team decision on upgrading.
+- [10:22] (P3) **Version pins recorded — P1/P2 please match:** Node 18.20.5 (`.nvmrc` + `engines.node`), `@sentry/node` v10, `@google/genai` v2, `mongodb` v6, `langfuse` v3, `openai` v4. Run `npm run doctor` to check. **Conflict: `@google/genai` v2 declares node>=20** and only its v1.0.x supports 18, so `engine-strict` is off deliberately — team decision needed on moving to Node 20.
+- [10:30] (P3) Judge hardened before any live quota: schema failures bucket as `invalid` and rate-limit/timeout exhaustion as `skipped`, **neither counted as a wrong decision**; bounded backoff honouring `Retry-After`; OpenAI `maxRetries: 0` so the SDK's own retries don't compound with ours.
+- [10:31] (P3) **Honest tier labelling enforced in code.** Summaries are labelled with the exact model ids that ran (default `gpt-4o-mini` vs `gemini-2.5-flash`, NOT "GPT-4o vs Gemini"), cross-tier pairs print a TIER MISMATCH warning, and the disagreement list is now the headline with aggregate percentages secondary.
+- [10:32] (P3) **`isProductNumber` guard added: true only for `--model=engine`.** Stub and judge-wrapper runs print a loud NOT A PRODUCT NUMBER banner. Please don't quote any other number as AgentGate's.
+- [10:33] (P3) **Live backend verification NOT done — there is no `.env` in the repo** and no Sentry/Gemini/LangFuse vars are exported, so I could not run against the real backends. Everything remains transport-verified against local collectors only; I have deliberately not reported mock results as live. Blocked on keys.
+- [10:34] (P3) **Engine re-baseline queued, blocked on P2.** `packages/engine` does not exist yet. The moment it exports `evaluate`: `npm run eval -w @agentgate/evals -- --model=engine --update-baseline`. All prior baselines are stub / P3-judge and are superseded by that run.
