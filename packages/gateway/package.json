@@ -1,0 +1,35 @@
+{
+  "name": "gateway",
+  "version": "1.0.0",
+  "description": "AgentGate MCP proxy: intercepts agent tool calls and allows or blocks them",
+  "main": "src/index.ts",
+  "scripts": {
+    "test": "node --import tsx --test src/*.test.ts",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "smoke": "tsx src/smoke-test.ts",
+    "serve": "tsx src/http-server.ts",
+    "dev:worker": "wrangler dev",
+    "db:local": "wrangler d1 migrations apply agentgate --local",
+    "deploy": "wrangler deploy",
+    "fake-engine": "tsx src/fake-engine.ts",
+    "sentry:check": "tsx src/sentry-check.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@agentgate/shared": "*",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@sentry/cloudflare": "^10.75.0",
+    "@sentry/node": "^10.75.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2",
+    "wrangler": "^4.135.0"
+  }
+}
