@@ -2,6 +2,9 @@
 
 For **Person 1** (TypeScript gateway) and **Person 3** (Python demo agents + evals).
 
+> Diagrams of the whole flow, the pipeline internals and both integration paths are in
+> **[ARCHITECTURE.md](./ARCHITECTURE.md)**. This file is the practical how-to.
+
 The engine is a **Python HTTP service**. It returns a judgement and enforces nothing —
 blocking, forwarding and the human-review queue are the gateway's job.
 

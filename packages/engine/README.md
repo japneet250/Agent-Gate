@@ -5,8 +5,10 @@ deterministic rules run first, and everything they don't settle comes here.
 
 Python service. The gateway (TypeScript) calls it over HTTP.
 
+- **How it works, with diagrams:** [ARCHITECTURE.md](./ARCHITECTURE.md)
 - **Plugging it in:** [INTEGRATION.md](./INTEGRATION.md)
 - **Seeing it work:** [RUNBOOK.md](./RUNBOOK.md)
+- **Deploying it:** [DEPLOYMENT.md](./DEPLOYMENT.md)
 
 ---
 

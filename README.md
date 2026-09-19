@@ -68,6 +68,7 @@ The only required environment variable is `OPENAI_API_KEY` in a root `.env`
 
 Full docs:
 
+- **[packages/engine/ARCHITECTURE.md](packages/engine/ARCHITECTURE.md)** — flowcharts: how it works and how to connect to it
 - **[packages/engine/README.md](packages/engine/README.md)** — design and why
 - **[packages/engine/INTEGRATION.md](packages/engine/INTEGRATION.md)** — Person 1 and Person 3, start here
 - **[packages/engine/RUNBOOK.md](packages/engine/RUNBOOK.md)** — seeing it work, and troubleshooting
