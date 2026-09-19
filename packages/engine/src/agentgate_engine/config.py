@@ -93,8 +93,17 @@ class Config:
 
     langfuse_public_key: str = field(default_factory=lambda: os.getenv("LANGFUSE_PUBLIC_KEY", ""))
     langfuse_secret_key: str = field(default_factory=lambda: os.getenv("LANGFUSE_SECRET_KEY", ""))
+    # Three spellings are in play across this repo and the LangFuse SDKs:
+    # LANGFUSE_BASEURL (python sdk), LANGFUSE_BASE_URL (P3's typescript),
+    # LANGFUSE_HOST (langfuse docs). Accept any, so one team member setting the
+    # "wrong" one does not silently send traces to the wrong region and 401.
     langfuse_base_url: str = field(
-        default_factory=lambda: os.getenv("LANGFUSE_BASEURL", "https://cloud.langfuse.com")
+        default_factory=lambda: (
+            os.getenv("LANGFUSE_BASEURL")
+            or os.getenv("LANGFUSE_BASE_URL")
+            or os.getenv("LANGFUSE_HOST")
+            or "https://cloud.langfuse.com"
+        )
     )
 
     def has_openai(self) -> bool:
