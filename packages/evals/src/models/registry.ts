@@ -1,6 +1,12 @@
 import type { EvaluateLike } from '@agentgate/observability';
 import type { DecisionPath } from '@agentgate/observability';
-import { resolveEvaluate, type EngineKind } from '../engine/index.js';
+import {
+  resolveEvaluate,
+  engineBaseUrl,
+  resetEngineSessions,
+  resetEngineDegradedCount,
+  type EngineKind,
+} from '../engine/index.js';
 import { createJudge, hasApiKey, API_KEY_ENV, type Provider } from './judge.js';
 
 /**
@@ -38,8 +44,41 @@ export async function resolveModel(name: ModelName): Promise<ResolveOutcome> {
   if (name === 'stub' || name === 'engine') {
     const resolved = await resolveEvaluate(name as EngineKind);
     if (name === 'engine' && resolved.kind !== 'engine') {
-      return { ok: false, name, reason: 'P2 engine does not export evaluate() yet' };
+      return {
+        ok: false,
+        name,
+        reason: `no engine answering at ${engineBaseUrl()} — start it with: cd packages/engine && ./venv/bin/uvicorn server:app --port 8000`,
+      };
     }
+
+    if (name === 'engine') {
+      // The engine's session store is in-memory and outlives a run. Our
+      // cumulative scenarios replay their priorActions into it, so a second
+      // suite against the same process would replay onto state that is already
+      // there and double every total. Clear it once, here.
+      resetEngineDegradedCount();
+      if (!(await resetEngineSessions())) {
+        console.warn('  [warn] could not reset engine sessions — cumulative totals may carry over');
+      }
+
+      // Label it as the pipeline it is. The engine is a classifier + RAG
+      // retrieval + judge + pattern detector; calling it "gpt-4o" would read as
+      // a raw-model comparison and is exactly the mislabelling the honesty rule
+      // exists to prevent.
+      const judge = resolved.health?.judgeModel ?? 'unknown';
+      return {
+        ok: true,
+        model: {
+          name,
+          label: `engine(judge=${judge})`,
+          modelId: `engine(judge=${judge})`,
+          evaluate: resolved.evaluate,
+          path: 'judge',
+          retries: () => 0,
+        },
+      };
+    }
+
     return {
       ok: true,
       model: {

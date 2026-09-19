@@ -1,5 +1,6 @@
 import type { AgentAction, EvalResult, SessionContext } from '@agentgate/shared-types';
 import { evaluateStub } from './stub.js';
+import { createEngineEvaluate, engineBaseUrl, engineHealth, type EngineHealth } from './http.js';
 
 export type EvaluateFn = (
   action: AgentAction,
@@ -7,15 +8,16 @@ export type EvaluateFn = (
 ) => Promise<EvalResult>;
 
 /**
- * TODO: confirm with P2 — proposed third parameter so the engine can be asked
- * to decide with a specific model:
+ * RESOLVED -- P2 rejected this. There is no third parameter: the engine picks
+ * its judge from the AGENTGATE_JUDGE_MODEL environment variable instead
+ * (packages/engine/INTEGRATION.md, "Environment").
  *
- *   evaluate(action, context, opts?: { model?: string }): Promise<EvalResult>
+ * Consequence: the model comparison stays in P3's own judge wrapper
+ * (../models/judge.ts) and does not go through the engine. That is not a
+ * workaround -- pinning the model per-request is simply not something the
+ * engine offers, and env-var selection cannot vary within a single run.
  *
- * Until P2 confirms, the model comparison runs through P3's own judge wrapper
- * (../models/judge.ts) instead of the engine, so the two models differ only in
- * the model itself. If P2 adopts the option, the comparison should move behind
- * evaluate() and the wrapper becomes redundant.
+ * Kept as a type alias only so nothing that imported it breaks.
  */
 export type EvaluateOptions = { model?: string };
 
@@ -25,36 +27,62 @@ export function engineKind(): EngineKind {
   return process.env.AGENTGATE_ENGINE === 'engine' ? 'engine' : 'stub';
 }
 
+export type ResolvedEngine = {
+  evaluate: EvaluateFn;
+  kind: EngineKind;
+  /** Present only when kind === 'engine'; carries the exact judge model id. */
+  health?: EngineHealth;
+};
+
 /**
  * Resolves the evaluate() implementation.
  *
  * AGENTGATE_ENGINE=stub   (default) -> local rule stub, always runnable
- * AGENTGATE_ENGINE=engine           -> P2's real engine
+ * AGENTGATE_ENGINE=engine           -> P2's Python service over HTTP
  *
- * TODO: replace the dynamic import below with a static
- * `import { evaluate } from '@agentgate/engine'` once P2 publishes it.
+ * P2's engine is a FastAPI service, not an npm package, so "is the engine
+ * available" is a liveness question rather than an import question. We ask
+ * /health first: an unreachable service returns kind 'stub', which is what makes
+ * `--model=engine` refuse to run rather than quietly scoring the stub under the
+ * engine's name.
  */
-export async function resolveEvaluate(kind: EngineKind = engineKind()): Promise<{
-  evaluate: EvaluateFn;
-  kind: EngineKind;
-}> {
+export async function resolveEvaluate(kind: EngineKind = engineKind()): Promise<ResolvedEngine> {
   if (kind === 'engine') {
-    try {
-      const mod: Record<string, unknown> = await import(
-        /* @vite-ignore */ '@agentgate/engine' as string
-      );
-      const evaluate = mod.evaluate as EvaluateFn | undefined;
-      if (typeof evaluate !== 'function') {
-        throw new Error("@agentgate/engine does not export evaluate()");
-      }
-      return { evaluate, kind: 'engine' };
-    } catch (err) {
+    const baseUrl = engineBaseUrl();
+    const health = await engineHealth(baseUrl);
+
+    if (!health) {
       console.warn(
-        `[evals] AGENTGATE_ENGINE=engine but the real engine is not usable yet (${(err as Error).message}); falling back to the stub.`,
+        `[evals] AGENTGATE_ENGINE=engine but no engine is answering at ${baseUrl}.\n` +
+          `        Start it:  cd packages/engine && ./venv/bin/uvicorn server:app --port 8000\n` +
+          `        Falling back to the stub.`,
       );
+    } else {
+      if (!health.openaiConfigured) {
+        console.warn(
+          `[evals] engine is up but reports openaiConfigured=false — it will degrade to\n` +
+            `        fallbacks instead of judging. Set OPENAI_API_KEY in the repo-root .env.`,
+        );
+      }
+      if (health.retrieval !== 'hybrid') {
+        console.warn(
+          `[evals] engine retrieval is "${health.retrieval}", not "hybrid" — semantic policy\n` +
+            `        matching is off, so this run does not measure the engine at full strength.`,
+        );
+      }
+      return { evaluate: createEngineEvaluate({ baseUrl }), kind: 'engine', health };
     }
   }
   return { evaluate: evaluateStub, kind: 'stub' };
 }
 
 export { evaluateStub };
+export {
+  createEngineEvaluate,
+  engineBaseUrl,
+  engineHealth,
+  engineDegradedCount,
+  resetEngineDegradedCount,
+  resetEngineSessions,
+  type EngineHealth,
+} from './http.js';

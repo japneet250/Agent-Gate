@@ -21,6 +21,7 @@ import {
 } from './report.js';
 import { buildByModelReport, printComparison } from './compare.js';
 import { parseModelNames, resolveModel, type ModelName } from './models/registry.js';
+import { engineDegradedCount } from './engine/index.js';
 import { buildRunDoc, historyEnabled, recordRun } from './history.js';
 import {
   checkRegression,
@@ -202,7 +203,26 @@ async function main() {
       ].join('\n'),
     );
   } else {
-    console.log('\n  This IS the product number (--model=engine).');
+    // "degraded" means an engine node fell back instead of using its model --
+    // no API key, provider down, circuit breaker open. Those evaluations
+    // measure the fallback path, not the engine, so a run containing any of
+    // them is not clean enough to quote.
+    const degraded = engineDegradedCount();
+    if (degraded > 0) {
+      console.log(
+        [
+          '',
+          '  ' + '!'.repeat(64),
+          '  !! DEGRADED RUN — NOT QUOTABLE',
+          `  !! ${degraded} of ${primary.rows.length} evaluations came back degraded:true,`,
+          '  !! meaning an engine node fell back instead of using its model.',
+          '  !! Fix the cause and re-run before quoting this number.',
+          '  ' + '!'.repeat(64),
+        ].join('\n'),
+      );
+    } else {
+      console.log('\n  This IS the product number (--model=engine), no degraded evaluations.');
+    }
   }
 
   if (keepBaseline && baseline) {
