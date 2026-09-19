@@ -61,15 +61,15 @@ queue are the gateway's job.
 flowchart TD
     IN["AgentAction<br/>tool name + args + sessionId"] --> C
 
-    C["1 · classifier<br/><i>gpt-4o-mini</i>"] -->|category| R
+    C["1 · classifier<br/>gpt-4o-mini"] -->|category| R
     C -.->|"model down"| CH["regex heuristic<br/>reads before money words"]
     CH -.-> R
 
-    R["2 · policy_retriever<br/><i>hybrid search</i>"] -->|"top-5 policies"| J
+    R["2 · policy_retriever<br/>hybrid search"] -->|"top-5 policies"| J
     R -.->|"embeddings down"| RK["keyword-only"]
     RK -.-> J
 
-    J["3 · risk_judge<br/><i>gpt-4o, function calling</i>"] --> GR
+    J["3 · risk_judge<br/>gpt-4o, function calling"] --> GR
     J -.->|"judge down"| JF["risk 50 · degraded"]
 
     GR["guardrails<br/>clamp · grounding"] --> G
@@ -141,7 +141,7 @@ the limit.
 
 ```mermaid
 flowchart LR
-    ACT["tool args<br/><code>body: 123-45-6789</code>"] --> EN
+    ACT["tool args<br/>body: 123-45-6789"] --> EN
 
     EN["enrich.py<br/>detect entity shapes"] --> Q
     EN -.- NOTE["a raw SSN shares no words<br/>with 'personally identifiable<br/>information' — so name it"]
@@ -149,7 +149,7 @@ flowchart LR
     Q["query text<br/>+ 'social security number…'"] --> EMB
     Q --> KW
 
-    EMB["embed<br/><i>text-embedding-3-small</i>"] --> VS
+    EMB["embed<br/>text-embedding-3-small"] --> VS
     VS[("Vectorize<br/>or memory")] --> DENSE["cosine"]
     KW["token overlap"] --> SPARSE["BM25-ish"]
 
@@ -180,8 +180,8 @@ says "PII" — and kept it at rank 1 in a live run where embeddings failed entir
 flowchart TD
     F{"what failed?"}
     F -->|no API key| E1["risk 50 → escalate"]
-    F -->|classifier| E2["regex heuristic<br/><i>continues</i>"]
-    F -->|embeddings| E3["keyword-only retrieval<br/><i>continues</i>"]
+    F -->|classifier| E2["regex heuristic<br/>continues"]
+    F -->|embeddings| E3["keyword-only retrieval<br/>continues"]
     F -->|judge| E4["risk 50 → escalate"]
     F -->|"3 failures in a row"| E5["circuit opens 30s<br/>fail fast"]
     F -->|anything else| E6["risk 50 → escalate"]
@@ -206,12 +206,12 @@ firewall that cannot judge must not allow.*
 
 ```mermaid
 flowchart LR
-    P["pipeline"] --> VI["VectorStore<br/><i>protocol</i>"]
-    P --> SI["SessionStore<br/><i>protocol</i>"]
+    P["pipeline"] --> VI["VectorStore<br/>protocol"]
+    P --> SI["SessionStore<br/>protocol"]
 
-    VI --> MV["MemoryVectorStore<br/><b>default</b>"]
+    VI --> MV["MemoryVectorStore<br/>(default)"]
     VI --> CV["VectorizeStore<br/>REST"]
-    SI --> MS["MemorySessionStore<br/><b>default</b>"]
+    SI --> MS["MemorySessionStore<br/>(default)"]
     SI --> CD["D1SessionStore<br/>REST"]
 
     CV -.->|"unreachable"| MV
@@ -226,6 +226,10 @@ await configure_cloudflare_stores()      # no-op without credentials
 ```
 
 Both Cloudflare stores **fail soft** — unreachable means fall back to memory, not go down.
+They also cover Vectorize's eventual consistency: every upsert is mirrored locally, and a query
+that comes back empty while a mutation is still settling is served from that mirror rather than
+dropping retrieval to keyword-only.
+
 `GET /health` reports what is actually in use, so a silent fallback cannot be mistaken for
 success:
 
@@ -437,6 +441,24 @@ project.
 | `./venv/bin/python test_live.py` | 18 live scenarios against GPT-4o |
 | `./venv/bin/python cloudflare_setup.py` | provision + verify Vectorize and D1 |
 | `uvicorn server:app --port 8000` | the service |
+
+---
+
+## 11. Verified status
+
+| Piece | State |
+| --- | --- |
+| 35 offline tests (no API key) | passing |
+| 18 live scenarios vs GPT-4o | passing, three consecutive runs |
+| `demo.py` in-process and `--http` | both verified |
+| HTTP service end to end | verified: block/100/PII Protection, allow/0 |
+| **Vectorize RAG, live** | **verified** — index created, 21 policies embedded, queries returning correct policies |
+| **D1 session state, live** | **verified** — cumulative detector fires at #13 with state in D1 |
+| Dockerfile | **unverified** — Docker unavailable on the authoring machine |
+
+Latency, healthy connection: `mean 1914ms · p50 1815ms · p95 2698ms`.
+
+---
 
 See also: [README](README.md) · [INTEGRATION](INTEGRATION.md) · [RUNBOOK](RUNBOOK.md) ·
 [DEPLOYMENT](DEPLOYMENT.md)

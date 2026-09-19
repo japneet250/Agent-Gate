@@ -28,6 +28,24 @@ That creates the Vectorize index, embeds all 21 policies into it, creates the D1
 table, and runs one real query and one real write so you know it works before
 the demo rather than during it.
 
+**Verified live.** Against a real Cloudflare account the full path works: RAG
+served by Vectorize, session state persisted in D1, and the cumulative detector
+still firing at exactly transaction #13 with D1 reporting
+`totalSpend: 5600.0` across 14 actions.
+
+### One Vectorize behaviour that will confuse you
+
+`GET .../info` returns **`vectorCount: 0` long after vectors are queryable** —
+it lagged for minutes in testing while queries returned correct matches the
+whole time. Do not use the count to decide whether the index is populated; run
+a query instead. `VectorizeStore.is_queryable()` does exactly that, and
+`cloudflare_setup.py` polls with it.
+
+Upserts are also eventually consistent — for a few seconds after a write, a
+query legitimately returns nothing. The store mirrors every upsert into memory
+and serves from that mirror when Vectorize returns empty, so the lag window
+never silently drops retrieval to keyword-only.
+
 `GET /health` then reports what is actually in use:
 
 ```json

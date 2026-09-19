@@ -139,21 +139,58 @@ class VectorizeStore:
             )
             result = _check(res.json(), "vectorize query")
             self._degraded = False
-            return [
+            matches = [
                 VectorMatch(id=m["id"], score=float(m["score"]))
                 for m in result.get("matches", [])
             ]
+            if matches:
+                return matches
+
+            # Vectorize is eventually consistent: for a few seconds after an
+            # upsert a query legitimately returns nothing while the mutation is
+            # still being applied. We mirror every upsert locally precisely so
+            # that window does not silently drop us to keyword-only retrieval.
+            if await self._fallback.size() > 0:
+                print("[agentgate] Vectorize returned no matches (mutation still settling); "
+                      "serving this query from the local mirror")
+                return await self._fallback.query(vector, top_k)
+            return []
         except Exception as err:  # noqa: BLE001
             self._degraded = True
             print(f"[agentgate] Vectorize query failed, falling back to in-memory: {err}")
             return await self._fallback.query(vector, top_k)
 
     async def size(self) -> int:
+        """Vectors reported by the index.
+
+        NOTE: Cloudflare's info endpoint lags badly — it returns 0 for a long
+        while after vectors are already queryable. Do not use this to decide
+        whether the index is populated; run a query instead.
+        """
         try:
             res = await self._client.get(f"{self._base}/info", headers=_headers(self._token))
             return int(_check(res.json(), "vectorize info").get("vectorCount", 0))
         except Exception:  # noqa: BLE001
             return await self._fallback.size()
+
+    async def is_queryable(self, probe: list[float], attempts: int = 8, delay: float = 4.0) -> bool:
+        """Poll until the index actually answers a query.
+
+        The honest readiness check, since `size()` cannot be trusted.
+        """
+        for _ in range(attempts):
+            try:
+                res = await self._client.post(
+                    f"{self._base}/query",
+                    headers=_headers(self._token),
+                    json={"vector": probe, "topK": 1, "returnMetadata": "none"},
+                )
+                if (_check(res.json(), "vectorize query").get("matches") or []):
+                    return True
+            except Exception:  # noqa: BLE001
+                pass
+            await asyncio.sleep(delay)
+        return False
 
     async def aclose(self) -> None:
         await self._client.aclose()

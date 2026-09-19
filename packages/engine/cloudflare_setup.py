@@ -78,10 +78,15 @@ async def main() -> None:
     if vectors.degraded:
         print(f"  {WARN} upsert fell back to memory — Vectorize write did not land")
 
-    # Vectorize is eventually consistent; a fresh index needs a moment.
-    await asyncio.sleep(3)
-    count = await vectors.size()
-    print(f"  {OK if count else WARN} index reports {count} vectors")
+    # Vectorize is eventually consistent, and its vectorCount lags for far
+    # longer than that, so poll with a real query instead of trusting the count.
+    print("  … waiting for the index to answer queries (can take ~10-30s)")
+    probe = [0.01] * 1536
+    ready = await vectors.is_queryable(probe)
+    print(f"  {OK if ready else BAD} index answers queries"
+          f"{'' if ready else ' — upsert may not have landed'}")
+    if not ready:
+        sys.exit(1)
 
     hits = await retrieve_policies(
         'Tool "send_email" with arguments: {"body":"SSN 123-45-6789"}. '
@@ -90,8 +95,8 @@ async def main() -> None:
     )
     top = hits[0].name if hits else "(none)"
     live = any(h.dense_score > 0 for h in hits)
-    print(f"  {OK if live else WARN} live query -> top hit: {top}"
-          f"{'' if live else '  (no dense scores — served from fallback, not Vectorize)'}")
+    print(f"  {OK if live else WARN} live retrieval -> top hit: {top}"
+          f"{'' if live else '  (no dense scores — served from the local mirror)'}")
 
     # --- D1 ------------------------------------------------------------------
     if config.d1_database_id:
