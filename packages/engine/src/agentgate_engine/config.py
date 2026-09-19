@@ -79,6 +79,11 @@ class Config:
     sparse_weight: float = field(default_factory=lambda: _num("AGENTGATE_SPARSE_WEIGHT", 0.3))
     category_boost: float = field(default_factory=lambda: _num("AGENTGATE_CATEGORY_BOOST", 0.15))
 
+    # Shared secret. When set, /evaluate and the session endpoints require
+    # `Authorization: Bearer <key>`. Empty means open — fine on localhost,
+    # never fine on a public URL.
+    api_key: str = field(default_factory=lambda: os.getenv("AGENTGATE_API_KEY", ""))
+
     # Cloudflare. When account id + token + index/database are set, the engine
     # uses Vectorize for RAG and D1 for session state instead of memory.
     cloudflare_account_id: str = field(default_factory=lambda: os.getenv("CLOUDFLARE_ACCOUNT_ID", ""))

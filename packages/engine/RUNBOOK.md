@@ -186,7 +186,14 @@ Add to the repo-root `.env`:
 ```
 LANGFUSE_PUBLIC_KEY=pk-lf-…
 LANGFUSE_SECRET_KEY=sk-lf-…
+LANGFUSE_BASEURL=https://us.cloud.langfuse.com
 ```
+
+**Get the region right.** LangFuse Cloud is regional and keys only work against
+their own region — EU is `https://cloud.langfuse.com`, US is
+`https://us.cloud.langfuse.com`. The wrong one returns a 401 reading
+*"Invalid credentials. Confirm that you've configured the correct host"*, which
+reads like a bad key and is not. This project is on **US**.
 
 Restart and run anything. Each evaluation becomes one trace at
 [cloud.langfuse.com](https://cloud.langfuse.com):
@@ -209,6 +216,7 @@ screenshot for the Devpost submission.
 
 | Symptom | Cause |
 | --- | --- |
+| LangFuse 401 "invalid credentials" | wrong regional host — see above, this project is US |
 | `retrieval: keyword-only` in `/health` | no API key, or the embedding call failed. Still works; semantic matching is off. |
 | Everything comes back `escalate` at ~10ms | circuit breaker is open — OpenAI failed 3 times. Clears after 30s. |
 | Cumulative alert never fires | a different `sessionId` per action. It must be stable per conversation. |

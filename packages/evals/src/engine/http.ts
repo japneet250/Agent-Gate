@@ -19,10 +19,26 @@ import { JudgeInvalidOutput, withRetry, type RetryOptions, DEFAULT_RETRY } from 
 export type EngineHttpOptions = {
   baseUrl?: string;
   timeoutMs?: number;
+  /** Shared secret; defaults to AGENTGATE_API_KEY. */
+  apiKey?: string;
   /** Replay a scenario's priorActions through the engine first. See replay note below. */
   replayPriorActions?: boolean;
   retry?: RetryOptions;
 };
+
+/**
+ * Shared secret for the engine's HTTP API (P2, commit a93cd8c). Empty means the
+ * engine is open, which is correct on localhost and wrong the moment it is
+ * tunnelled for the demo -- an open endpoint lets anyone spend our OpenAI
+ * credit. When set, every engine call must carry `Authorization: Bearer <key>`.
+ */
+export function engineApiKey(): string | undefined {
+  return process.env.AGENTGATE_API_KEY || undefined;
+}
+
+function authHeaders(apiKey: string | undefined): Record<string, string> {
+  return apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
+}
 
 export function engineBaseUrl(): string {
   return (process.env.AGENTGATE_ENGINE_URL ?? 'http://localhost:8000').replace(/\/+$/, '');
@@ -105,10 +121,11 @@ async function postJson(
   url: string,
   body: unknown,
   timeoutMs: number,
+  apiKey?: string,
 ): Promise<Record<string, unknown>> {
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders(apiKey) },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(timeoutMs),
   });
@@ -177,6 +194,7 @@ export function createEngineEvaluate(options: EngineHttpOptions = {}) {
   const baseUrl = options.baseUrl ?? engineBaseUrl();
   const timeoutMs = options.timeoutMs ?? engineTimeoutMs();
   const retry = options.retry ?? DEFAULT_RETRY;
+  const apiKey = options.apiKey ?? engineApiKey();
   const replay = options.replayPriorActions ?? process.env.AGENTGATE_ENGINE_REPLAY !== '0';
   const url = `${baseUrl}/evaluate`;
 
@@ -188,7 +206,10 @@ export function createEngineEvaluate(options: EngineHttpOptions = {}) {
       for (const prior of context?.recentActions ?? []) {
         // No context: the engine falls back to the history it recorded itself,
         // which is exactly the state we are trying to build up.
-        await withRetry(() => postJson(url, { action: toWireAction(prior) }, timeoutMs), retry);
+        await withRetry(
+          () => postJson(url, { action: toWireAction(prior) }, timeoutMs, apiKey),
+          retry,
+        );
       }
     }
 
@@ -206,6 +227,7 @@ export function createEngineEvaluate(options: EngineHttpOptions = {}) {
               : toWireContext(context),
           },
           timeoutMs,
+          apiKey,
         ),
       retry,
     );
@@ -221,13 +243,23 @@ export type EngineHealth = {
   judgeModel: string;
   classifierModel?: string;
   openaiConfigured: boolean;
+  /** True when the engine requires Authorization: Bearer (P2 commit a93cd8c). */
+  authRequired?: boolean;
   storage?: Record<string, string>;
 };
 
 /** Liveness + config. Returns null when the service is not reachable at all. */
-export async function engineHealth(baseUrl = engineBaseUrl()): Promise<EngineHealth | null> {
+export async function engineHealth(
+  baseUrl = engineBaseUrl(),
+  apiKey = engineApiKey(),
+): Promise<EngineHealth | null> {
   try {
-    const res = await fetch(`${baseUrl}/health`, { signal: AbortSignal.timeout(5_000) });
+    // /health is deliberately unauthenticated on P2's side, but send the header
+    // anyway so this keeps working if that ever changes.
+    const res = await fetch(`${baseUrl}/health`, {
+      headers: authHeaders(apiKey),
+      signal: AbortSignal.timeout(5_000),
+    });
     if (!res.ok) return null;
     return (await res.json()) as EngineHealth;
   } catch {
@@ -243,10 +275,14 @@ export async function engineHealth(baseUrl = engineBaseUrl()): Promise<EngineHea
  * so a second suite against the same process would replay priors onto state that
  * is already there and double every total. Call once before a suite.
  */
-export async function resetEngineSessions(baseUrl = engineBaseUrl()): Promise<boolean> {
+export async function resetEngineSessions(
+  baseUrl = engineBaseUrl(),
+  apiKey = engineApiKey(),
+): Promise<boolean> {
   try {
     const res = await fetch(`${baseUrl}/sessions/reset`, {
       method: 'POST',
+      headers: authHeaders(apiKey),
       signal: AbortSignal.timeout(5_000),
     });
     return res.ok;

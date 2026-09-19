@@ -1,6 +1,12 @@
 import type { AgentAction, EvalResult, SessionContext } from '@agentgate/shared-types';
 import { evaluateStub } from './stub.js';
-import { createEngineEvaluate, engineBaseUrl, engineHealth, type EngineHealth } from './http.js';
+import {
+  createEngineEvaluate,
+  engineApiKey,
+  engineBaseUrl,
+  engineHealth,
+  type EngineHealth,
+} from './http.js';
 
 export type EvaluateFn = (
   action: AgentAction,
@@ -64,6 +70,15 @@ export async function resolveEvaluate(kind: EngineKind = engineKind()): Promise<
             `        fallbacks instead of judging. Set OPENAI_API_KEY in the repo-root .env.`,
         );
       }
+      if (health.authRequired && !engineApiKey()) {
+        // Without the header every call 401s. 401 is not retryable, so the whole
+        // suite would bucket as `skipped` -- a correct refusal to invent numbers,
+        // but it reads as "the engine is flaky" unless we name the cause here.
+        console.warn(
+          `[evals] engine requires Authorization: Bearer but AGENTGATE_API_KEY is unset.\n` +
+            `        Every call will 401 and bucket as skipped. Set it in the repo-root .env.`,
+        );
+      }
       if (health.retrieval !== 'hybrid') {
         console.warn(
           `[evals] engine retrieval is "${health.retrieval}", not "hybrid" — semantic policy\n` +
@@ -79,6 +94,7 @@ export async function resolveEvaluate(kind: EngineKind = engineKind()): Promise<
 export { evaluateStub };
 export {
   createEngineEvaluate,
+  engineApiKey,
   engineBaseUrl,
   engineHealth,
   engineDegradedCount,

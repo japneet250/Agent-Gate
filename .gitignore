@@ -19,3 +19,6 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
+
+# local tooling (cloudflared binary)
+.tools/
