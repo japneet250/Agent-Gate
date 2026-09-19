@@ -13,7 +13,8 @@
     "db:local": "wrangler d1 migrations apply agentgate --local",
     "deploy": "wrangler deploy",
     "fake-engine": "tsx src/fake-engine.ts",
-    "sentry:check": "tsx src/sentry-check.ts"
+    "sentry:check": "tsx src/sentry-check.ts",
+    "mcp": "tsx src/mcp.ts"
   },
   "keywords": [],
   "author": "",
@@ -24,7 +25,7 @@
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@sentry/cloudflare": "^10.75.0",
     "@sentry/node": "^10.75.0",
-    "zod": "^4.6.5"
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/node": "^26.6.2",
