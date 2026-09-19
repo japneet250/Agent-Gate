@@ -326,7 +326,7 @@ async def configure_cloudflare_stores(*, vectors: bool = True, sessions: bool = 
         try:
             await store.ensure_schema()
             kwargs["sessions"] = store
-            status["sessions"] = f"d1:{store.database_id[:8]}…"
+            status["sessions"] = f"d1:{store.database_id[:8]}"
         except Exception as err:  # noqa: BLE001
             print(f"[agentgate] D1 unavailable, staying in-memory: {err}")
 
