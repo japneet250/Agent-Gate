@@ -22,6 +22,7 @@ packages/gateway        P1 — MCP gateway
 packages/engine         P2 — LangGraph judge / RAG / pattern detector
 packages/demo-agents    P3 — mock MCP tool servers + demo agents
 packages/evals          P3 — eval harness + stub evaluate()
+packages/observability  P3 — Sentry + LangFuse wiring
 apps/dashboard          Next.js dashboard
 ```
 
@@ -138,6 +139,58 @@ Agents route every tool call through a `ToolGate`
 gateway speaks MCP stdio, `src/agents/mcp-client.ts` points at the gateway instead
 of the mock server and nothing else changes.
 
+**`packages/evals` — eval harness (READY).**
+
+100 labelled scenarios in `packages/evals/scenarios.json`: 40 safe→allow,
+30 dangerous→block, 20 ambiguous→escalate, 10 cumulative-pattern cases that are
+only decidable from prior session actions.
+
+```bash
+npm run eval -w @agentgate/evals                      # full suite
+npm run eval -w @agentgate/evals -- --category=ambiguous
+npm run eval -w @agentgate/evals -- --engine=engine   # force P2's real engine
+npm run eval -w @agentgate/evals -- --strict --min-macro-f1=0.85   # CI gate
+```
+
+Prints per-class precision/recall/F1, a confusion matrix, per-category accuracy,
+latency percentiles and every mismatch with the policy that fired; full detail
+goes to `packages/evals/report.json` (gitignored).
+
+**Current stub baseline: accuracy 91%, macro-F1 0.895** (allow F1 0.966,
+escalate 0.829, block 0.889). **P2 — this is the number to beat.** The stub's
+known gaps, which the real engine should pick up: it misses `rm -rf ~/` and fork
+bombs, treats `GRANT ALL` as a mere schema change, and can't tell a $10,000
+payment that should escalate from one that should block.
+
+**`packages/observability` — Sentry + LangFuse (READY).**
+
+Both no-op without keys, so nothing breaks offline.
+
+- **Sentry:** one `agentgate.evaluate` breadcrumb per evaluation (tool, args,
+  decision, riskScore, violatedPolicy, latency), a warning event per `block`,
+  and captured `uncaughtException` / `unhandledRejection`. Wired into both the
+  demo-agent CLI and the eval harness.
+- **LangFuse span tree** — **P1/P2 please use these exact names:**
+
+```
+agentgate.agent.run          (P3) one demo-agent run / one eval suite
+  agentgate.tool_call        (P3) one attempted tool call
+    agentgate.evaluate       (P2) evaluate() -- P2, nest your judge / RAG /
+                                  pattern-detector spans UNDER this one
+    agentgate.tool_exec      (P3) forwarded call to the real tool; absent
+                                  unless the decision was allow
+```
+
+Import the `SPAN` constants from `@agentgate/observability` rather than
+retyping the strings.
+
+```bash
+npm run verify -w @agentgate/observability   # proves both actually emit
+```
+
+That spins up a local collector speaking both ingest protocols and runs a real
+agent run + eval run against it — no live keys needed. Both currently PASS.
+
 ### What I depend on
 
 - P2: `evaluate(action, context)` exported from `@agentgate/engine`; confirmation of `SessionContext`.
@@ -146,8 +199,9 @@ of the mock server and nothing else changes.
 
 ### Next up
 
-Eval harness (~100 labelled scenarios, precision/recall/F1, `evals/report.json`),
-then Sentry, then LangFuse.
+Deliverables 1–4 are done. Stretch only: DeepEval wrapper over the same
+scenarios, OpenTelemetry spans, RAGAS on P2's RAG. Say the word if you'd rather
+I spend the time on the demo script or on widening the scenario set.
 
 ---
 
@@ -159,3 +213,6 @@ _Append-only. Format: `- [HH:MM] (Px) <what changed / decided / impact>`_
 - [05:22] (P3) Added `SessionContext` + `RISK_THRESHOLDS` + `decisionForRiskScore` to `shared-types`. **`SessionContext` is provisional and owned by P2** — P2, confirm or amend it, I've coded the stub and harness against it.
 - [05:24] (P3) Mock MCP tool servers + 3 demo agents are RUNNABLE on branch `person3` (`npm run smoke -w @agentgate/demo-agents`). P1 unblocked: spawn via `mockServerCommand(server)`. Servers log to stderr only.
 - [05:25] (P3) Stub `evaluate()` in `packages/evals` behind `AGENTGATE_ENGINE=stub|engine`; auto-swaps to `@agentgate/engine` once P2 exports `evaluate`. P2: no action needed beyond the export.
+- [05:40] (P3) Eval harness READY: 100 labelled scenarios, per-class precision/recall/F1 + confusion matrix + `report.json`. Stub baseline accuracy 91% / macro-F1 0.895 — P2, that's the bar.
+- [05:52] (P3) Added `packages/observability` (P3-owned): Sentry breadcrumbs + LangFuse tracing, both no-op without keys. **P1/P2: use the `SPAN` constants; P2 nest engine spans under `agentgate.evaluate`.** Verified actually emitting via a local collector (`npm run verify -w @agentgate/observability`).
+- [05:53] (P3) Cumulative spend accounting agreed as: book spend on `approve_payment` only, and only when the decision was `allow` — otherwise a PO plus its payment double-counts. P2: match this in the pattern detector or tell me to change it.
