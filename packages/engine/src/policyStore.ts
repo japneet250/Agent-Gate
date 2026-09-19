@@ -1,24 +1,26 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import OpenAI from 'openai';
 import type { ActionCategory } from '@agentgate/shared';
 import { config, hasOpenAI } from './config.ts';
+import { guardedCall, openai, usageOf, type Usage } from './llm.ts';
+import { vectorStore } from './store/index.ts';
 import type { RetrievedPolicy } from './state.ts';
+import { noopTrace, type Trace } from './trace.ts';
 
 const POLICY_DIR = join(dirname(fileURLToPath(import.meta.url)), 'policies');
 
-interface StoredPolicy extends Omit<RetrievedPolicy, 'score'> {
-  embedding?: number[];
+export interface StoredPolicy extends Omit<RetrievedPolicy, 'score' | 'denseScore' | 'sparseScore'> {
   tokens: Set<string>;
 }
 
 let store: StoredPolicy[] | null = null;
-let embeddedOnce = false;
+let indexed = false;
 
 const STOP = new Set([
   'the', 'a', 'an', 'and', 'or', 'of', 'to', 'in', 'for', 'on', 'is', 'are', 'be', 'may',
   'not', 'that', 'this', 'with', 'as', 'by', 'from', 'it', 'its', 'any', 'all', 'must',
+  'agent', 'agents', 'action', 'called', 'arguments', 'tool', 'category',
 ]);
 
 function tokenize(text: string): Set<string> {
@@ -30,11 +32,13 @@ function tokenize(text: string): Set<string> {
   );
 }
 
-/** Parse `# Title`, body, `Severity:` and `Applies to:` out of a policy markdown file. */
+/** Parse `# Title`, body, `Severity:` and `Applies to:` out of a policy file. */
 function parsePolicy(file: string, raw: string): StoredPolicy {
   const id = file.replace(/\.md$/, '');
   const name = raw.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? id;
   const severity = raw.match(/^Severity:\s*(.+)$/im)?.[1]?.trim().toLowerCase() ?? 'medium';
+  const enforcedBy =
+    /^Enforced by:\s*pattern_detector\s*$/im.test(raw) ? 'pattern_detector' : 'judge';
   const appliesTo = (raw.match(/^Applies to:\s*(.+)$/im)?.[1] ?? '')
     .split(',')
     .map((s) => s.trim())
@@ -43,6 +47,7 @@ function parsePolicy(file: string, raw: string): StoredPolicy {
     .replace(/^#.+$/m, '')
     .replace(/^Severity:.+$/im, '')
     .replace(/^Applies to:.+$/im, '')
+    .replace(/^Enforced by:.+$/im, '')
     .trim();
 
   return {
@@ -54,61 +59,58 @@ function parsePolicy(file: string, raw: string): StoredPolicy {
     text: raw.trim(),
     severity,
     appliesTo,
+    enforcedBy,
     tokens: tokenize(`${name} ${description}`),
   };
 }
 
 export function loadPolicies(): StoredPolicy[] {
-  if (store) return store;
-  store = readdirSync(POLICY_DIR)
+  store ??= readdirSync(POLICY_DIR)
     .filter((f) => f.endsWith('.md'))
     .map((f) => parsePolicy(f, readFileSync(join(POLICY_DIR, f), 'utf8')));
   return store;
 }
 
-function cosine(a: number[], b: number[]): number {
-  let dot = 0;
-  let na = 0;
-  let nb = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    na += a[i] * a[i];
-    nb += b[i] * b[i];
-  }
-  return dot / (Math.sqrt(na) * Math.sqrt(nb) || 1);
+/** Test seam: replace the policy set without touching disk. */
+export function setPolicies(raw: { file: string; content: string }[] | null): void {
+  store = raw ? raw.map((r) => parsePolicy(r.file, r.content)) : null;
+  indexed = false;
 }
 
-let openai: OpenAI | null = null;
-function client(): OpenAI {
-  openai ??= new OpenAI({ apiKey: config.openaiApiKey });
-  return openai;
-}
-
-async function embed(texts: string[]): Promise<number[][]> {
-  const res = await client().embeddings.create({ model: config.embedModel, input: texts });
-  return res.data.map((d) => d.embedding);
+async function embed(texts: string[], trace: Trace, label: string): Promise<{ vectors: number[][]; usage: Usage }> {
+  const gen = trace.generation(label, config.embedModel, { count: texts.length });
+  const res = await guardedCall(
+    () => openai().embeddings.create({ model: config.embedModel, input: texts }),
+    { label: 'embeddings', timeoutMs: config.embedTimeoutMs },
+  );
+  const usage = usageOf(config.embedModel, res.usage as { prompt_tokens?: number });
+  gen.end({ dimensions: res.data[0]?.embedding.length }, usage);
+  return { vectors: res.data.map((d) => d.embedding), usage };
 }
 
 /**
- * Embed every policy once, at startup. Cheap (18 short docs) and keeps the hot
- * path to a single query embedding. Safe to call repeatedly.
+ * Embed every policy once, into the configured vector store. Cheap (18 short
+ * docs) and it keeps the hot path down to a single query embedding.
  */
-export async function warmPolicyIndex(): Promise<void> {
+export async function warmPolicyIndex(trace: Trace = noopTrace): Promise<boolean> {
   const policies = loadPolicies();
-  if (embeddedOnce || !hasOpenAI()) return;
+  if (indexed || !hasOpenAI()) return indexed;
   try {
-    const vectors = await embed(policies.map((p) => p.text));
-    policies.forEach((p, i) => {
-      p.embedding = vectors[i];
-    });
-    embeddedOnce = true;
+    const { vectors } = await embed(policies.map((p) => p.text), trace, 'policy_index.embed');
+    await vectorStore().upsert(
+      policies.map((p, i) => ({ id: p.id, vector: vectors[i], metadata: { name: p.name } })),
+    );
+    indexed = true;
   } catch (err) {
-    // Keyword-only retrieval still works; don't take the pipeline down for it.
-    console.warn('[agentgate] policy embedding failed, falling back to keyword search:', err);
+    // Keyword-only retrieval still works; don't take the pipeline down for this.
+    console.warn('[agentgate] policy embedding failed, keyword-only retrieval:', (err as Error).message);
   }
+  return indexed;
 }
 
-/** Keyword overlap score in [0,1] — our stand-in for BM25 in the hybrid blend. */
+export const isIndexed = () => indexed;
+
+/** Keyword overlap in [0,1] — our stand-in for BM25 in the hybrid blend. */
 function keywordScore(queryTokens: Set<string>, policy: StoredPolicy): number {
   if (queryTokens.size === 0) return 0;
   let hits = 0;
@@ -119,39 +121,49 @@ function keywordScore(queryTokens: Set<string>, policy: StoredPolicy): number {
 export interface RetrieveOptions {
   category?: ActionCategory;
   topK?: number;
+  trace?: Trace;
 }
 
 /**
  * Hybrid retrieval: dense vector similarity + keyword overlap + a small boost
- * for policies tagged with the classified action category.
+ * for policies tagged with the classified action category. Degrades to
+ * keyword-only when embeddings are unavailable.
  */
 export async function retrievePolicies(
   query: string,
   opts: RetrieveOptions = {},
 ): Promise<RetrievedPolicy[]> {
+  const trace = opts.trace ?? noopTrace;
   const policies = loadPolicies().filter((p) => p.enabled);
   const topK = opts.topK ?? config.topK;
   const queryTokens = tokenize(query);
 
-  let queryVector: number[] | null = null;
+  const dense = new Map<string, number>();
   if (hasOpenAI()) {
-    await warmPolicyIndex();
-    try {
-      [queryVector] = await embed([query]);
-    } catch (err) {
-      console.warn('[agentgate] query embedding failed, keyword-only retrieval:', err);
+    await warmPolicyIndex(trace);
+    if (indexed) {
+      try {
+        const { vectors } = await embed([query], trace, 'policy_retriever.embed_query');
+        // Score every policy, not just top-K, so the sparse signal can still promote one.
+        for (const m of await vectorStore().query(vectors[0], policies.length)) {
+          dense.set(m.id, m.score);
+        }
+      } catch (err) {
+        console.warn('[agentgate] query embedding failed, keyword-only:', (err as Error).message);
+      }
     }
   }
 
-  const scored = policies.map((p) => {
-    const dense = queryVector && p.embedding ? cosine(queryVector, p.embedding) : 0;
-    const sparse = keywordScore(queryTokens, p);
-    const categoryBoost = opts.category && p.appliesTo.includes(opts.category) ? 0.15 : 0;
-    const score = queryVector && p.embedding
-      ? 0.7 * dense + 0.3 * sparse + categoryBoost
-      : sparse + categoryBoost;
-    const { embedding, tokens, ...rest } = p;
-    return { ...rest, score } satisfies RetrievedPolicy;
+  const useDense = dense.size > 0;
+  const scored: RetrievedPolicy[] = policies.map((p) => {
+    const denseScore = dense.get(p.id) ?? 0;
+    const sparseScore = keywordScore(queryTokens, p);
+    const boost = opts.category && p.appliesTo.includes(opts.category) ? config.categoryBoost : 0;
+    const score = useDense
+      ? config.denseWeight * denseScore + config.sparseWeight * sparseScore + boost
+      : sparseScore + boost;
+    const { tokens, ...rest } = p;
+    return { ...rest, score, denseScore, sparseScore };
   });
 
   return scored.sort((a, b) => b.score - a.score).slice(0, topK);
