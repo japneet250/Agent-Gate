@@ -111,20 +111,32 @@ export function AgentTerminal({ persona, onActivity }: { persona: Persona; onAct
         <span className="ml-1 grid h-5 w-5 place-items-center rounded-field" style={{ background: persona.glow }}>
           <Bot className="h-3 w-3" style={{ color: persona.accent }} strokeWidth={2.4} />
         </span>
-        <p className="min-w-0 flex-1 truncate text-meta font-semibold text-paper">{persona.company}</p>
-        <span className="shrink-0 font-mono text-meta text-dim">{persona.role}</span>
-      </div>
-
-      <div className="border-b border-white/10 px-3 py-1.5">
-        <p className="text-meta leading-snug text-dim">
-          {persona.sector} · {persona.brief}
-        </p>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-meta font-semibold leading-tight text-paper">{persona.company}</p>
+          <p className="truncate text-meta leading-tight text-dim">{persona.sector}</p>
+        </div>
+        <span
+          className="shrink-0 rounded-pill px-1.5 py-0.5 text-meta"
+          style={{ background: persona.glow, color: persona.accent }}
+        >
+          {persona.role}
+        </span>
       </div>
 
       <div ref={scroller} className="flex-1 space-y-2 overflow-y-auto p-3 font-mono text-meta">
         {lines.length === 0 && (
           <div className="space-y-1.5">
-            <p className="text-dim">Ask this agent to do something — or try one of these:</p>
+            <div className="mb-2.5 flex flex-wrap gap-1">
+              {persona.tools.map((t) => (
+                <span
+                  key={t.name}
+                  className="rounded-pill border border-white/10 px-1.5 py-0.5 text-meta text-dim"
+                >
+                  {t.name}
+                </span>
+              ))}
+            </div>
+            <p className="text-dim">Try one, or type your own:</p>
             {persona.prompts.map((p) => (
               <button
                 key={p}
