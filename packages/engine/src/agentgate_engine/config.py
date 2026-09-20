@@ -86,11 +86,26 @@ class Config:
 
     # Zip — procurement. With a token set, financial actions are grounded in
     # real budget, vendor and approval-chain state instead of a policy's guess.
-    zip_api_base: str = field(default_factory=lambda: os.getenv("ZIP_API_BASE", "https://api.ziphq.com/v1"))
+    # Verified by probing the live API: the host answers "Welcome to Zip API!"
+    # at the root and there is no /v1 prefix.
+    zip_api_base: str = field(default_factory=lambda: os.getenv("ZIP_API_BASE", "https://api.ziphq.com"))
     zip_api_token: str = field(default_factory=lambda: os.getenv("ZIP_API_TOKEN", ""))
-    zip_budgets_path: str = field(default_factory=lambda: os.getenv("ZIP_BUDGETS_PATH", "/budgets"))
+    # Endpoint reconnaissance against the live API (401 means the route exists
+    # and only the key was rejected; 404 means it does not exist):
+    #   /vendors      401  exists
+    #   /requests     401  exists
+    #   /approvals    401  exists   <- my earlier guess /approval-chains was 404
+    #   /departments  401  exists
+    #   /users        401  exists
+    #   /budgets      405  exists but allows only OPTIONS, PUT — no GET, so
+    #                      budget state is not readable by this path
+    #   /purchase-orders, /me, /cost-centers   404
     zip_vendors_path: str = field(default_factory=lambda: os.getenv("ZIP_VENDORS_PATH", "/vendors"))
-    zip_approvals_path: str = field(default_factory=lambda: os.getenv("ZIP_APPROVALS_PATH", "/approval-chains"))
+    zip_approvals_path: str = field(default_factory=lambda: os.getenv("ZIP_APPROVALS_PATH", "/approvals"))
+    # /budgets rejects GET. Left configurable so it can be pointed at whatever
+    # Zip's docs say once we can authenticate and read them.
+    zip_budgets_path: str = field(default_factory=lambda: os.getenv("ZIP_BUDGETS_PATH", "/budgets"))
+    zip_requests_path: str = field(default_factory=lambda: os.getenv("ZIP_REQUESTS_PATH", "/requests"))
 
     # Cloudflare. When account id + token + index/database are set, the engine
     # uses Vectorize for RAG and D1 for session state instead of memory.

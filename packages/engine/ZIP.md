@@ -68,13 +68,52 @@ any policy file could catch that.
 
 ### Configuration
 
-| variable | default | |
+| variable | default | status |
 | --- | --- | --- |
 | `ZIP_API_TOKEN` | — | required; empty disables grounding entirely |
-| `ZIP_API_BASE` | `https://api.ziphq.com/v1` | |
-| `ZIP_BUDGETS_PATH` | `/budgets` | |
-| `ZIP_VENDORS_PATH` | `/vendors` | |
-| `ZIP_APPROVALS_PATH` | `/approval-chains` | |
+| `ZIP_API_BASE` | `https://api.ziphq.com` | **verified** — no `/v1` prefix |
+| `ZIP_VENDORS_PATH` | `/vendors` | **verified** the route exists |
+| `ZIP_APPROVALS_PATH` | `/approvals` | **verified** (my first guess `/approval-chains` was a 404) |
+| `ZIP_BUDGETS_PATH` | `/budgets` | exists but **rejects GET** — see below |
+
+### What probing the live API established
+
+A 401 means the route exists and only the key was rejected; a 404 means it does
+not exist. Against `api.ziphq.com`, which answers "Welcome to Zip API!" at the
+root:
+
+```
+/vendors           401   exists
+/requests          401   exists
+/approvals         401   exists
+/departments       401   exists
+/users             401   exists
+/budgets           405   exists, but Allow: OPTIONS, PUT — no GET
+/purchase-orders   404
+/approval-chains   404   (my original guess)
+/cost-centers      404
+/me                404
+```
+
+**`/budgets` does not answer GET.** Budget state may live under a different
+route, or be reachable only once authenticated well enough to read their docs.
+That is the one piece of the grounding story still unresolved.
+
+### The token is being rejected
+
+```
+no auth header  →  {"message":"Missing API Key","code":"UNAUTHORIZED"}
+with our token  →  {"message":"The provided API key is not valid"}
+```
+
+The API distinguishes the two, so it is parsing the key and refusing it. Tried
+as `Authorization: Bearer`, `Authorization: Token`, bare `Authorization`,
+`X-Api-Key` and `x-zip-api-key` — all 401. The key is 38 characters, which may
+mean it is truncated.
+
+**Ask Zip for:** a working key for the company they provisioned, the header they
+expect, and whether there is a sandbox host. `api-sandbox.ziphq.com` redirects
+to `api-sandbox.zip.com`, which 404s.
 
 The three lookups run concurrently, because the judge is on a latency budget.
 Every one fails soft: Zip unreachable degrades to policy-only reasoning and says

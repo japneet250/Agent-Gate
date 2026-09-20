@@ -81,7 +81,7 @@ class TestClient:
                      "currency": "USD", "openCommitments": 15000}]})
             if p.endswith("/vendors"):
                 return httpx.Response(200, json={"data": [{"name": "Acme", "status": "pending"}]})
-            if p.endswith("/approval-chains"):
+            if p.endswith("/approvals"):
                 return httpx.Response(200, json={"data": [
                     {"role": "Department Head"}, {"role": "CFO"}]})
             return httpx.Response(404, json={})
