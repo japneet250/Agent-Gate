@@ -98,11 +98,11 @@ export function AgentTerminal({ persona, onActivity }: { persona: Persona; onAct
 
   return (
     <div
-      className="flex h-[36rem] flex-col overflow-hidden rounded-card border border-white/10 bg-ink-850"
+      className="flex h-[36rem] flex-col overflow-hidden rounded-card border border-white/10 bg-ink-700"
       style={{ boxShadow: `0 0 0 1px ${persona.glow}, 0 24px 64px -32px rgba(0,0,0,0.95)` }}
     >
       {/* macOS window chrome: sells "a real machine" in one glance. */}
-      <div className="flex items-center gap-2 border-b border-white/10 bg-ink-800 px-3 py-2">
+      <div className="flex items-center gap-2 border-b border-white/10 bg-ink-750 px-3 py-2">
         <span className="flex gap-1.5">
           <i className="h-2.5 w-2.5 rounded-full bg-[#ff5f57]" />
           <i className="h-2.5 w-2.5 rounded-full bg-[#febc2e]" />
@@ -179,7 +179,7 @@ export function AgentTerminal({ persona, onActivity }: { persona: Persona; onAct
           return (
             <div
               key={i}
-              className={cn('animate-slide-in rounded-field border-l-2 bg-ink-800 px-3 py-2.5', d.border)}
+              className={cn('animate-slide-in rounded-field border-l-2 bg-ink-750 px-3 py-2.5', d.border)}
             >
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <d.Icon className={cn('h-4 w-4', d.cls)} strokeWidth={2.4} />
@@ -206,7 +206,7 @@ export function AgentTerminal({ persona, onActivity }: { persona: Persona; onAct
         )}
       </div>
 
-      <div className="flex items-center gap-2 border-t border-white/10 bg-ink-800 px-3 py-2.5">
+      <div className="flex items-center gap-2 border-t border-white/10 bg-ink-750 px-3 py-2.5">
         <span style={{ color: persona.accent }} className="font-mono text-body">
           ❯
         </span>
