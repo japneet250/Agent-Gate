@@ -1,29 +1,175 @@
-# AgentGate
+<div align="center">
 
-**The firewall between your AI agents and the real world.**
+```
+ █████╗  ██████╗ ███████╗███╗   ██╗████████╗ ██████╗  █████╗ ████████╗███████╗
+██╔══██╗██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝██╔════╝ ██╔══██╗╚══██╔══╝██╔════╝
+███████║██║  ███╗█████╗  ██╔██╗ ██║   ██║   ██║  ███╗███████║   ██║   █████╗
+██╔══██║██║   ██║██╔══╝  ██║╚██╗██║   ██║   ██║   ██║██╔══██║   ██║   ██╔══╝
+██║  ██║╚██████╔╝███████╗██║ ╚████║   ██║   ╚██████╔╝██║  ██║   ██║   ███████╗
+╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝   ╚═╝   ╚══════╝
+```
 
-AI agents send email, move money, run commands and query production databases.
-Almost nothing sits between the agent and those tools to stop a bad action
-*before* it happens. Guardrails validate text. Tracing tells you what already
-went wrong. AgentGate refuses the action.
+### *The firewall between your AI agents and the real world*
 
-Every tool call passes through AgentGate first and comes back **allowed**,
-**blocked**, or **held for a human** — with a written reason citing the policy
-it violated.
+**Every tool call an agent makes is intercepted, judged, and allowed — or refused.**
+
+[![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers_·_D1_·_Vectorize-F38020?style=for-the-badge&logo=cloudflare&logoColor=white)](https://workers.cloudflare.com)
+[![MCP](https://img.shields.io/badge/MCP-Gateway_Proxy-000000?style=for-the-badge&logo=anthropic&logoColor=white)](https://modelcontextprotocol.io)
+[![LangGraph](https://img.shields.io/badge/LangGraph-5_Node_Pipeline-8B5CF6?style=for-the-badge&logo=python&logoColor=white)](https://langchain-ai.github.io/langgraph/)
+[![OpenAI](https://img.shields.io/badge/OpenAI-GPT--4o_Judge-412991?style=for-the-badge&logo=openai&logoColor=white)](https://platform.openai.com)
+[![Next.js](https://img.shields.io/badge/Next.js-14-000000?style=for-the-badge&logo=nextdotjs&logoColor=white)](https://nextjs.org)
+[![Sentry](https://img.shields.io/badge/Sentry-Tracing_·_Logs-362D59?style=for-the-badge&logo=sentry&logoColor=white)](https://sentry.io)
+[![LangFuse](https://img.shields.io/badge/LangFuse-Per--Node_Traces-0A0A0A?style=for-the-badge)](https://langfuse.com)
+
+<br/>
+
+**[⚡ Live at the edge](https://agentgate-gateway.paivaaaryan.workers.dev/health) · [🧠 Architecture](#architecture) · [📊 Benchmark](#measured-not-claimed) · [🔌 Integrations](#two-ways-to-install-it)**
+
+</div>
+
+---
+
+## The problem
+
+Companies are shipping AI agents that send email, move money, modify databases and
+talk to customers — with **zero runtime protection**.
+
+When an agent hallucinates, leaks a Social Security number, approves a $50K
+purchase nobody authorised, or drops a production table, nobody finds out until
+the damage is done.
+
+The existing tools do not cover this:
+
+| Tool | What it does | What it misses |
+| --- | --- | --- |
+| Guardrails AI | validates **text** in and out | the agent still *acts* |
+| LangFuse / tracing | tells you what **already** happened | after the fact |
+| Model alignment | the model may refuse | it is the thing you are trying to constrain |
+
+Nothing sits between the agent and the world to stop an **action** before it
+executes. There is no firewall for AI agents.
+
+## The solution
+
+AgentGate is a runtime interception layer. Every tool call passes through it
+first and comes back **allowed**, **blocked**, or **held for a human** — with a
+written reason citing the policy it violated.
 
 ```
 agent: "email the customer their account details"
                     │
              AgentGate
                     │
-   BLOCKED  risk 95/100  ·  0.26ms  ·  rule engine, no model call
+   BLOCKED   risk 95/100   ·   0.26ms   ·   rule engine, no model call
    PII detected: SSN in "body" — a Social Security number may never
    leave the organisation.
 ```
 
+Think network firewall, but for agent actions.
+
 ---
 
-## Run the whole thing
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph AGENT["Your AI Agent"]
+        A["Claude · Cursor · Codex<br/>or your own service"]
+    end
+
+    subgraph EDGE["AgentGate — Cloudflare Workers"]
+        P["MCP proxy / HTTP"] --> R{"Router"}
+        R -->|"fast path"| RULES["Rule engine<br/>5 deterministic rules<br/>~1ms · no model"]
+        R -->|"complex"| ENGINE["Evaluation pipeline"]
+        RULES --> D{"Allow · Block · Escalate"}
+        ENGINE --> D
+    end
+
+    subgraph DATA["Cloudflare"]
+        D1[("D1<br/>policies · sessions<br/>audit log")]
+        VEC[("Vectorize<br/>policy vectors")]
+    end
+
+    subgraph OBS["Observability"]
+        LF["LangFuse<br/>per-node traces"]
+        SEN["Sentry<br/>errors · tracing · logs"]
+    end
+
+    A -->|"tool call"| P
+    D -->|"allow"| TOOL["The real tool / API"]
+    D -->|"block"| REF["Refused, with the policy"]
+    D -->|"escalate"| HUMAN["Human review queue"]
+
+    R -.-> D1
+    ENGINE -.-> VEC
+    D -.-> D1
+    ENGINE -.-> LF
+    EDGE -.-> SEN
+
+    DASH["Control plane — Next.js"] --> D1
+```
+
+Two tiers, two speeds. Deterministic rules catch the obvious things in about a
+millisecond. Everything ambiguous goes to a reasoning pipeline that costs about
+two seconds and actually thinks.
+
+### The evaluation pipeline
+
+```mermaid
+flowchart TD
+    IN["AgentAction"] --> C["1 · Classifier<br/>gpt-4o-mini · structured output"]
+    C --> RET["2 · Policy retrieval<br/>Vectorize + BM25 hybrid"]
+    RET --> J["3 · Risk judge<br/>gpt-4o · function calling"]
+    J --> G["Guardrails on the judge's own output"]
+    G --> GATE{"4 · Decision gate<br/>&lt;30 allow · 30-69 escalate · &ge;70 block"}
+    GATE --> PAT["5 · Pattern detector<br/>cumulative limits across a session"]
+    PAT --> OUT["EvalResult<br/>risk · decision · reason · policy"]
+
+    C -.->|"model down"| CF["regex fallback"]
+    RET -.->|"embeddings down"| RF["keyword only"]
+    J -.->|"judge down"| JF["risk 50 → escalate"]
+```
+
+Each stage degrades rather than failing. The bias never changes: **a firewall
+that cannot judge must not allow.**
+
+### Guardrails on the judge itself
+
+The evaluator gets evaluated. Four checks run before a verdict can influence a
+decision:
+
+| | |
+| --- | --- |
+| **Structured output** | score clamped 0–100; a non-numeric score defaults to escalate, never to allow |
+| **Policy grounding** | a cited policy is dropped unless it exists *and* was retrieved for this action |
+| **Consistency** | the identical action twice in one session takes the stricter score |
+| **Latency budget** | an evaluation over budget is flagged on the result |
+
+### What no single-action check can catch
+
+Thirty $400 purchases are thirty legal transactions and one fraud.
+
+```mermaid
+sequenceDiagram
+    participant A as Procurement agent
+    participant G as AgentGate
+    participant S as Session state (D1)
+
+    A->>G: approve $400 — vendor on the approved list
+    G->>S: total = $400
+    G-->>A: ALLOW (risk 0)
+    Note over A,G: eleven more, each legal, each under the $500 limit
+    A->>G: approve $400 (#13)
+    G->>S: total = $5,200
+    S-->>G: over the $5,000 session limit
+    G-->>A: ESCALATE — approval-threshold splitting
+```
+
+The pattern detector is the only thing in the system that can see it.
+
+---
+
+## Quick start
 
 ```bash
 cp .env.example .env     # OPENAI_API_KEY is the only required value
@@ -31,9 +177,8 @@ npm install
 ./demo.sh
 ```
 
-One command. It starts the engine, the gateway and the dashboard, health-checks
-each, and prints what to open. `Ctrl-C` stops everything; `./demo.sh down` if it
-detached.
+One command starts the engine, the gateway and the dashboard, health-checks each,
+and prints what to open. `Ctrl-C` stops everything.
 
 ```
 ✔ engine up on :8000
@@ -42,27 +187,29 @@ detached.
 ✔ audit log: D1 4d29b4a2 (durable)
 ✔ dashboard up on :3100 (live mode)
 ✔ benchmark: 72.3% (engine(judge=gpt-4o))
+✔ edge: agentgate-gateway deployed on Cloudflare Workers
 ```
 
 Then open **http://localhost:3100/live**.
 
-> The engine needs a Python venv the first time:
-> `cd packages/engine && ./setup.sh`
+| Flag | What it adds |
+| --- | --- |
+| `./demo.sh --zip` | grounds financial judgments in Zip's live vendor and approval state |
+| `./demo.sh --deploy` | deploys the gateway to Cloudflare Workers and points it at your engine |
+
+> First run needs the engine venv: `cd packages/engine && ./setup.sh`
 
 ### Drive it
 
 ```bash
-./fire.sh support      # PII exfiltration  → BLOCK on the fast path
-./fire.sh coding       # DROP TABLE, rm -rf → BLOCK, no model call
-./fire.sh cumulative   # 14 legal $400 payments → ESCALATE at $5,200
+./fire.sh support      # PII exfiltration      → BLOCK on the fast path
+./fire.sh coding       # DROP TABLE, rm -rf    → BLOCK, no model call
+./fire.sh cumulative   # 13 legal $400 payments → ESCALATE at $5,200
+./fire.sh zip          # same $400, two vendors → Zip decides
 ./fire.sh all          # the three scenes, in demo order
 ```
 
-Or type at the agents yourself on `/live`.
-
----
-
-## The dashboard
+### The control plane
 
 | Route | What it is |
 | --- | --- |
@@ -70,77 +217,57 @@ Or type at the agents yourself on `/live`.
 | `/` | **The Shield** — live feed of every gated action |
 | `/analytics` | Live operations, LangFuse pipeline telemetry, the benchmark |
 | `/review` | Escalations waiting on a human |
-| `/policies` | The policy corpus — and publish a new one in plain English or from a document |
+| `/policies` | The corpus — publish a new policy in plain English or from a document |
 | `/present` | Opener: problem, mechanism, measurement |
-
----
-
-## How it works
-
-Two tiers, two speeds. Deterministic rules catch the obvious things in about a
-millisecond. Everything ambiguous goes to a reasoning pipeline that costs about
-two seconds and actually thinks.
-
-```
-                    ┌ Rule engine ──────────────┐
-             fast ↗ │ PII · destructive · ~1ms  │ ↘
-┌Proxy┐ ┌Router┐    └───────────────────────────┘  ┌Decision┐  ● Allowed
-│MCP· │→│fast  │    ┌ EVALUATION PIPELINE ──────┐ →│+ reason│→ ● Held
-│HTTP │ │or    │ ↘  │ Classifier        4o-mini │ ↗└────────┘  ● Blocked
-└─────┘ │full  │    │ Policy retrieval  Vec+BM25│
-        └──────┘    │ Risk judge        4o·guard│
-                    │ Decision gate     threshld│
-                    │ Pattern detector  cumul.  │
-                    └───────────────────────────┘
-```
-
-Each stage degrades rather than failing. The bias never changes: **a firewall
-that cannot judge must not allow.**
-
-### What no single-action check can catch
-
-Thirty $400 purchases are thirty legal transactions and one fraud. Verified, and
-deterministic:
-
-```
-● #1    $400  ALLOW  risk 0        ● #13  $5,200  ALLOW  risk 0
-  …eleven more, every one under the $500 limit…
-▲ #14  $5,600  ESCALATE  risk 75
-
-  Cumulative Spending Limit: $5,200 across 14 actions this session
-  exceeds the limit of $5,000. Pattern: approval-threshold splitting.
-```
 
 ---
 
 ## Two ways to install it
 
-**1 · MCP gateway.** Point the agent at AgentGate instead of at its tools. It
-mirrors the upstream server, so the agent sees the same tools it always had —
-and never holds a credential for them, so it cannot route around the firewall.
+### 1 · MCP gateway — any agent, no code change
+
+```mermaid
+flowchart LR
+    C["Claude Desktop<br/>Cursor · Codex · Zed"] -->|"stdio MCP"| AG["AgentGate<br/>MCP proxy"]
+    AG -->|"MCP"| T["The real tool server"]
+    AG -.->|"HTTP"| E["Judge"]
+```
+
+AgentGate mirrors the upstream server, so the agent sees the tools it always had.
 
 ```bash
 npm run mcp -w packages/gateway -- --config
 ```
 
-Merge into `~/Library/Application Support/Claude/claude_desktop_config.json`,
-⌘Q, reopen. Works the same for Cursor, Codex, Windsurf and Zed. See
-[gateway/MCP.md](packages/gateway/MCP.md).
+Merge into `claude_desktop_config.json`, ⌘Q, reopen. **The agent never holds a
+credential for the tools** — only AgentGate does — so it cannot route around the
+firewall.
 
-**2 · Internal systems.** One `POST /evaluate` before you execute, from any
-language. The three agents on `/live` run this way.
+### 2 · Internal systems — one POST, any language
+
+```bash
+curl -X POST https://agentgate-gateway.paivaaaryan.workers.dev/evaluate \
+  -H "authorization: Bearer $AGENTGATE_API_KEY" \
+  -d '{"agentId":"svc","toolName":"run_command","toolArgs":{"command":"rm -rf /"},"sessionId":"s1"}'
+
+{"decision":"block","riskScore":95,"decidedBy":"rules","latencyMs":0.3,
+ "reasoning":"destructive command: recursive rm in \"command\"",
+ "violatedPolicy":"destructive_command"}
+```
+
+That endpoint is **live on Cloudflare Workers**, with a D1 binding for the audit
+log. Try it.
 
 ---
 
 ## Policies are the product
 
-26 default policies ship as markdown, but they are **configuration, not code**.
+26 policies ship as markdown, but they are **configuration, not code**.
 
-`/policies` takes a rule in plain English, or a `.txt`, `.md`, `.pdf` or
-`.docx`. A document containing several rules becomes several policies. Each is
-rewritten into the engine's format, validated, stored in D1 and embedded into
-Vectorize — retrievable by the judge on the **next tool call**. No deploy, no
-restart.
+`/policies` takes a rule in plain English, or a `.txt`, `.md`, `.pdf` or `.docx`.
+A document containing several rules becomes several policies. Each is rewritten
+into the engine's format, validated, stored in D1 and embedded into Vectorize —
+retrievable by the judge on the **next tool call**. No deploy, no restart.
 
 ```
 You type:   "Agents must never transfer crypto to an external wallet
@@ -151,13 +278,8 @@ Seconds later:
   retrieved: Cryptocurrency Transfer Approval 0.79
 ```
 
-Submissions that state a *fact* about the organisation rather than a rule
-("we are a healthcare provider in Ontario") are stored as context entries —
-embedded and retrievable, worded so the judge cannot mistake a fact for a
-prohibition.
-
-**Cumulative limits are declared the same way.** A bank counts dollars, a
-hospital counts patient records, a SaaS company counts exported rows.
+Cumulative limits are declared the same way. A bank counts dollars, a hospital
+counts patient records, a SaaS company counts exported rows:
 
 ```markdown
 Enforced by: pattern_detector
@@ -172,13 +294,14 @@ When exceeded: escalate
 ## Measured, not claimed
 
 ```
-rule engine      0.26 – 2ms       no model call, no cost
+rule engine      0.26 – 2ms        no model call, no cost
 engine pipeline  mean 1485ms · p50 1476ms · p95 1793ms
-tests            87 engine · 108/108 gateway
-benchmark        112 labelled scenarios, --model=engine, gpt-4o judge
+edge (Workers)   87 – 317ms        rule path, including network
+tests            127 gateway · 121 engine
+benchmark        112 labelled scenarios · --model=engine · gpt-4o judge
 ```
 
-**Accuracy 72.3%, macro-F1 0.654.**
+**Accuracy 72.3% · macro-F1 0.654**
 
 | class | recall | precision |
 | --- | --- | --- |
@@ -189,80 +312,64 @@ benchmark        112 labelled scenarios, --model=engine, gpt-4o judge
 **It does not miss threats** — block recall is 100%. The losses are over-refusal
 of cases the labels call escalations, and most trace to an unresolved
 disagreement about spending thresholds: the scenarios assume a $10,000 limit,
-the engine and the demo use $500 and $5,000. Neither set of numbers satisfies
-the current labels. That number is honest and not yet good.
+the engine and the demo use $500 and $5,000.
 
-A regression gate refuses to promote a worse run. A re-run on 2026-09-20 scored
-67.3% and was written to `report.failed.json` rather than becoming the baseline.
-
-`/analytics` reads the report from disk per request — re-run the harness and the
-page updates within ten seconds, no rebuild:
+That number is honest and not yet good. A regression gate refuses to promote a
+worse run — a re-run scored 67.3% and was written to `report.failed.json` rather
+than becoming the baseline.
 
 ```bash
 npm run eval -w @agentgate/evals -- --model=engine
-# add --update-baseline only if it beats the current number
 ```
 
-**Only `--model=engine` produces a number that may be called AgentGate's score.**
-Everything else prints a `NOT A PRODUCT NUMBER` banner.
+`/analytics` reads the report from disk per request, so a re-run lands on the
+page within ten seconds with no rebuild. **Only `--model=engine` produces a
+number that may be called AgentGate's score** — everything else prints a
+`NOT A PRODUCT NUMBER` banner.
 
 ---
 
-## What is live
+## Tech stack
 
-| | |
-| --- | --- |
-| **OpenAI** | gpt-4o judge, gpt-4o-mini classifier, text-embedding-3-small |
-| **Cloudflare Vectorize** | policy vectors — live, in-memory mirror covers write lag |
-| **Cloudflare D1** | policies, sessions and the action log — live, durable |
-| **LangFuse** | one trace per evaluation, a span per node — read back onto `/analytics` |
-| **Sentry** | errors and tracing on the gateway |
-| **Zip** | MCP proxy in front of `ziphq-mcp`, plus live budget/vendor grounding |
-
-Both Cloudflare stores fail soft: unreachable means falling back to memory, and
-`GET /health` reports which is actually in use, so a silent fallback cannot be
-mistaken for success.
-
-Nothing the dashboard shows is lost on restart. Verified by killing the gateway
-mid-session: 19 feed rows before, 19 after.
+| Layer | Technology | How it is used |
+| --- | --- | --- |
+| **Edge runtime** | Cloudflare Workers | the gateway runs here — interception, rules, routing, audit |
+| **State** | Cloudflare D1 | policies, session counters, the action log (native `env.DB` binding) |
+| **Vectors** | Cloudflare Vectorize | policy embeddings for RAG, with an in-memory mirror over write lag |
+| **Gateway** | TypeScript · `@modelcontextprotocol/sdk` | MCP stdio proxy, 5-rule engine, D1 audit log |
+| **Engine** | Python · FastAPI · LangGraph | 5-node evaluation pipeline |
+| **Judge** | OpenAI gpt-4o | risk scoring via function calling |
+| **Classifier** | OpenAI gpt-4o-mini | action type, cheap and fast |
+| **Embeddings** | OpenAI text-embedding-3-small | policy and action vectors |
+| **Retrieval** | Vectorize + BM25 | hybrid semantic + keyword |
+| **Control plane** | Next.js 14 · Tailwind · Recharts | live feed, analytics, policy editor, review queue |
+| **LLM observability** | LangFuse | one trace per evaluation, a span per node, read back onto `/analytics` |
+| **App observability** | Sentry | errors, tracing and structured logs, on Node **and** the Worker |
+| **Procurement** | Zip API + `ziphq-mcp` | governs 131 Zip tools; grounds judgments in live vendor/approval state |
+| **Evals** | Custom harness + DeepEval | 112 labelled scenarios, regression gate, cross-check |
+| **Second opinion** | Google Gemini | model comparison in the eval harness |
+| **Eval history** | MongoDB | optional run history (`MONGODB_URI`) |
+| **Document intake** | unpdf · mammoth | policy upload from PDF and DOCX |
+| **Monorepo** | npm workspaces · Turborepo | six packages, one install |
 
 ---
 
 ## Layout
 
-| package | language | what |
-| --- | --- | --- |
-| `gateway` | TypeScript | MCP proxy, 5 rules, D1 audit log, Cloudflare Worker, Sentry |
-| `engine` | Python | LangGraph judge, RAG, policy admin, pattern detector |
-| `evals` | TypeScript | 112-scenario harness, regression gate, DeepEval cross-check |
-| `demo-agents` | TypeScript | three MCP tool servers, nine tools |
-| `observability` | TypeScript | Sentry and LangFuse wiring |
-| `apps/dashboard` | TypeScript | the control plane and the live stage |
-
----
-
-## TODO before submission
-
-- [ ] **Zip** — attach the sponsor integration to the submission. Built and
-      running against the live API ([engine/ZIP.md](packages/engine/ZIP.md));
-      `./demo.sh --zip` turns grounding on. It is **off by default** because the
-      staging tenant had no vendors, which made every payment a correctly
-      refused unapproved payee and pre-empted the cumulative scene. One vendor
-      now exists, so re-check whether it can be on for the demo.
-- [ ] **Cloudflare** — attach the sponsor integration to the submission. D1 and
-      Vectorize are live and verified; the gateway Worker has a `wrangler.jsonc`
-      and deploys, the Python engine cannot run on Workers and needs a container
-      host. See [engine/DEPLOYMENT.md](packages/engine/DEPLOYMENT.md).
-- [ ] Re-run the benchmark after the PII rule change and promote it only if it
-      beats 72.3%.
-- [ ] Nothing is deployed publicly — the demo runs on a laptop.
-- [ ] Resolve the $500 / $10,000 threshold disagreement between the scenario
-      labels and the engine config. Ten minutes of conversation is worth more
-      than any code here.
-
-Not started: Python SDK `wrap()`, Gemini second opinion, GPTZero, RAGAS,
-OpenTelemetry spans, KV caching. The review queue displays escalations but
-approve/deny is not wired.
+```
+packages/
+  gateway/        TypeScript  MCP proxy, rule engine, D1 audit log, Worker
+  engine/         Python      LangGraph judge, RAG, policy admin, patterns
+  evals/          TypeScript  112-scenario harness, regression gate, DeepEval
+  demo-agents/    TypeScript  three MCP tool servers, nine tools
+  observability/  TypeScript  Sentry and LangFuse wiring
+  shared-types/   TypeScript  the contract
+apps/
+  dashboard/      Next.js     control plane and the live stage
+demo.sh           one command to run everything
+fire.sh           drive the demo scenes
+deploy-worker.sh  ship the gateway to Cloudflare Workers
+```
 
 ---
 
@@ -273,11 +380,17 @@ approve/deny is not wired.
 | [engine/ARCHITECTURE.md](packages/engine/ARCHITECTURE.md) | every flow, and both integration paths |
 | [engine/INTEGRATION.md](packages/engine/INTEGRATION.md) | how to call the engine |
 | [engine/RUNBOOK.md](packages/engine/RUNBOOK.md) | seeing it work, and troubleshooting |
-| [engine/DEPLOYMENT.md](packages/engine/DEPLOYMENT.md) | deployment plan and its one constraint |
+| [engine/DEPLOYMENT.md](packages/engine/DEPLOYMENT.md) | deployment, and its one constraint |
 | [engine/ZIP.md](packages/engine/ZIP.md) | governing Zip's 131 tools |
 | [engine/CSE.md](packages/engine/CSE.md) | the CSE log analyser |
 | [gateway/MCP.md](packages/gateway/MCP.md) | connecting Claude Desktop, Cursor, Codex |
 
 ---
 
-Built at Hack the North 2026.
+<div align="center">
+
+**Built at Hack the North 2026.**
+
+*A firewall that cannot judge must not allow.*
+
+</div>
