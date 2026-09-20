@@ -39,7 +39,14 @@ stop_all() {
 if [[ "${1:-}" == "down" || "${1:-}" == "stop" ]]; then stop_all; exit 0; fi
 
 WITH_ZIP=0
-[[ "${1:-}" == "--zip" ]] && WITH_ZIP=1
+WITH_DEPLOY=0
+for arg in "$@"; do
+  [[ "$arg" == "--zip" ]] && WITH_ZIP=1
+  # Deploying is opt-in. It needs the network and a token with Workers Scripts:
+  # Edit, and a demo that cannot start because Cloudflare is having a moment is
+  # a worse demo than one that runs locally.
+  [[ "$arg" == "--deploy" || "$arg" == "--edge" ]] && WITH_DEPLOY=1
+done
 
 # ---------------------------------------------------------------- environment
 if [[ ! -f .env ]]; then
@@ -169,6 +176,28 @@ else
   bad "dashboard did not start — see $LOGS/dashboard.log"; tail -10 "$LOGS/dashboard.log"; exit 1
 fi
 
+# ----------------------------------------------------------------- the edge
+# Report what is actually deployed rather than what could be. "Not deployed" on
+# screen is worth more than silence, because the Cloudflare prize turns on
+# whether a Worker is really running.
+EDGE_URL=""
+if [[ $WITH_DEPLOY == 1 ]]; then
+  say ""
+  ./deploy-worker.sh || warn "deploy failed — the local stack is unaffected"
+fi
+
+if [[ -n "${CLOUDFLARE_API_TOKEN:-}" && -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
+  SCRIPTS=$(curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+    "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts" 2>/dev/null \
+    | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{try{const j=JSON.parse(d);console.log((j.result||[]).map(s=>s.id).join(','))}catch(e){console.log('')}})" 2>/dev/null)
+  if [[ "$SCRIPTS" == *agentgate-gateway* ]]; then
+    ok "edge: agentgate-gateway deployed on Cloudflare Workers"
+    EDGE_URL="deployed"
+  else
+    warn "edge: no Worker deployed — run ./demo.sh --deploy (needs Workers Scripts: Edit)"
+  fi
+fi
+
 # ------------------------------------------------------------------ what to do
 cat <<BANNER
 
@@ -202,6 +231,10 @@ ${B}Two ways to show it${X}
   ${B}2 · Enterprise${X} — the admin console
        Everything an agent attempts lands in the feed at /
        Escalations wait for a human at /review
+
+  ${B}Cloudflare edge${X}
+       ${D}./demo.sh --deploy${X}   deploy the gateway to Workers (D1 binding,
+                            Sentry-wrapped, engine reached over a tunnel)
 
   ${D}Ctrl-C stops everything.  Logs: .demo-logs/${X}
 
