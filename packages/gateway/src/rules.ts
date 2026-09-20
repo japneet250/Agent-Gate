@@ -103,8 +103,23 @@ const PHONE = /(?:\+\d{1,3}[\s.-]?)?(?:\(\d{3}\)\s?|\b\d{3}[\s.-])\d{3}[\s.-]\d{
 
 // Emails and phone numbers are normal in address-style fields ("to", "phone"), so only flag them elsewhere
 // (e.g. inside an email body). SSNs and card numbers are flagged in every field.
-const EMAIL_FIELDS = /^(to|cc|bcc|from|sender|reply_?to|recipients?|e-?mail(_?address)?)$/i;
-const PHONE_FIELDS = /^(phone(_?number)?|tel(ephone)?|mobile|cell)$/i;
+//
+// Lookup fields count as address-style too. An email address in `query` is the
+// IDENTIFIER of the record being fetched, not data leaving the building — and
+// looking a customer up by their email is the single most ordinary thing a
+// support agent does. Holding it for human review is a false positive that
+// makes the firewall look like it does not understand the job, which is how
+// security tooling gets switched off.
+const LOOKUP_FIELDS =
+  'query|q|search|term|filter|lookup|identifier|id|member(_?id)?|customer(_?id)?|user(_?id)?|account(_?id)?|username|login|owner|assignee';
+const EMAIL_FIELDS = new RegExp(
+  `^(to|cc|bcc|from|sender|reply_?to|recipients?|e-?mail(_?address)?|${LOOKUP_FIELDS})$`,
+  'i',
+);
+const PHONE_FIELDS = new RegExp(
+  `^(phone(_?number)?|tel(ephone)?|mobile|cell|${LOOKUP_FIELDS})$`,
+  'i',
+);
 
 const ssnValid = (area: string, group: string, serial: string) =>
   area !== '000' && area !== '666' && area[0] !== '9' && group !== '00' && serial !== '0000';

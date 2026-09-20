@@ -2,72 +2,96 @@
 
 **The firewall between your AI agents and the real world.**
 
-AI agents can send emails, move money, run commands and query production
-databases. Almost nothing sits between the agent and those tools to stop a bad
-action *before* it happens. Guardrails validate text. Tracing tells you what
-already went wrong. AgentGate refuses the action.
+AI agents send email, move money, run commands and query production databases.
+Almost nothing sits between the agent and those tools to stop a bad action
+*before* it happens. Guardrails validate text. Tracing tells you what already
+went wrong. AgentGate refuses the action.
 
-Every tool call an agent makes passes through AgentGate first and comes back
-**allowed**, **blocked**, or **escalated to a human** — with a written reason
-citing the company policy it violated.
+Every tool call passes through AgentGate first and comes back **allowed**,
+**blocked**, or **held for a human** — with a written reason citing the policy
+it violated.
 
 ```
 agent: "email the customer their account details"
                     │
              AgentGate
                     │
-   BLOCKED  risk 100/100  ·  2ms
-   PII Protection — the email contains a Social Security number and a
-   credit card number, which may never leave the organisation.
+   BLOCKED  risk 95/100  ·  0.26ms  ·  rule engine, no model call
+   PII detected: SSN in "body" — a Social Security number may never
+   leave the organisation.
 ```
+
+---
+
+## Run the whole thing
+
+```bash
+cp .env.example .env     # OPENAI_API_KEY is the only required value
+npm install
+./demo.sh
+```
+
+One command. It starts the engine, the gateway and the dashboard, health-checks
+each, and prints what to open. `Ctrl-C` stops everything; `./demo.sh down` if it
+detached.
+
+```
+✔ engine up on :8000
+✔ 27 policies · retrieval hybrid · vectors vectorize:agentgate-policies
+✔ gateway up on :8787 (MCP proxy + action feed collector)
+✔ audit log: D1 4d29b4a2 (durable)
+✔ dashboard up on :3100 (live mode)
+✔ benchmark: 72.3% (engine(judge=gpt-4o))
+```
+
+Then open **http://localhost:3100/live**.
+
+> The engine needs a Python venv the first time:
+> `cd packages/engine && ./setup.sh`
+
+### Drive it
+
+```bash
+./fire.sh support      # PII exfiltration  → BLOCK on the fast path
+./fire.sh coding       # DROP TABLE, rm -rf → BLOCK, no model call
+./fire.sh cumulative   # 14 legal $400 payments → ESCALATE at $5,200
+./fire.sh all          # the three scenes, in demo order
+```
+
+Or type at the agents yourself on `/live`.
+
+---
+
+## The dashboard
+
+| Route | What it is |
+| --- | --- |
+| **`/live`** | Three production agents in a terminal. Type anything; every call is really evaluated. |
+| `/` | **The Shield** — live feed of every gated action |
+| `/analytics` | Live operations, LangFuse pipeline telemetry, the benchmark |
+| `/review` | Escalations waiting on a human |
+| `/policies` | The policy corpus — and publish a new one in plain English or from a document |
+| `/present` | Opener: problem, mechanism, measurement |
 
 ---
 
 ## How it works
 
-Two tiers, two speeds. Cheap deterministic rules catch the obvious things in
-under a millisecond. Everything ambiguous goes to a reasoning pipeline that
-costs about two seconds and actually thinks.
+Two tiers, two speeds. Deterministic rules catch the obvious things in about a
+millisecond. Everything ambiguous goes to a reasoning pipeline that costs about
+two seconds and actually thinks.
 
-```mermaid
-flowchart LR
-    A["AI agent<br/>Claude · Cursor · Codex"] -->|MCP tool call| G
-
-    subgraph GW["Gateway — TypeScript"]
-        G["MCP proxy"] --> R{"rule engine<br/>5 rules · ~1ms · no LLM"}
-    end
-
-    R -->|"matched"| D
-    R -->|"no match"| E
-
-    subgraph EN["Engine — Python"]
-        E["5-node pipeline<br/>~2s"]
-    end
-
-    E --> D{"allow · block · escalate"}
-    D -->|allow| T["the real tool server"]
-    D -->|block| X["refused, with a reason"]
-    D -->|escalate| H["human review"]
 ```
-
-The rule engine is the bouncer at the door. The engine is the manager you call
-when the bouncer isn't sure.
-
-### The engine pipeline
-
-```mermaid
-flowchart TD
-    IN["AgentAction"] --> C["1 · classifier<br/>gpt-4o-mini"]
-    C --> R["2 · policy retriever<br/>hybrid: vector + keyword"]
-    R --> J["3 · risk judge<br/>gpt-4o · function calling"]
-    J --> GR["guardrails on the judge's own output"]
-    GR --> G{"4 · decision gate<br/>&lt;30 allow · 30-69 escalate · &ge;70 block"}
-    G --> P["5 · pattern detector<br/>cumulative limits"]
-    P --> OUT["EvalResult"]
-
-    C -.->|"model down"| CF["regex fallback"]
-    R -.->|"embeddings down"| RF["keyword only"]
-    J -.->|"judge down"| JF["risk 50 → escalate"]
+                    ┌ Rule engine ──────────────┐
+             fast ↗ │ PII · destructive · ~1ms  │ ↘
+┌Proxy┐ ┌Router┐    └───────────────────────────┘  ┌Decision┐  ● Allowed
+│MCP· │→│fast  │    ┌ EVALUATION PIPELINE ──────┐ →│+ reason│→ ● Held
+│HTTP │ │or    │ ↘  │ Classifier        4o-mini │ ↗└────────┘  ● Blocked
+└─────┘ │full  │    │ Policy retrieval  Vec+BM25│
+        └──────┘    │ Risk judge        4o·guard│
+                    │ Decision gate     threshld│
+                    │ Pattern detector  cumul.  │
+                    └───────────────────────────┘
 ```
 
 Each stage degrades rather than failing. The bias never changes: **a firewall
@@ -75,211 +99,170 @@ that cannot judge must not allow.**
 
 ### What no single-action check can catch
 
-```mermaid
-sequenceDiagram
-    participant A as Procurement agent
-    participant G as AgentGate
-    participant D as Session state
+Thirty $400 purchases are thirty legal transactions and one fraud. Verified, and
+deterministic:
 
-    A->>G: approve $400 to Supplier 1
-    G->>D: total = $400
-    G-->>A: ALLOW (risk 0)
-    Note over A,G: eleven more, each legal, each under the $500 limit
-    A->>G: approve $400 to Supplier 13
-    G->>D: total = $5,200
-    D-->>G: over the $5,000 session limit
-    G-->>A: ESCALATE — approval-threshold splitting
 ```
+● #1    $400  ALLOW  risk 0        ● #13  $5,200  ALLOW  risk 0
+  …eleven more, every one under the $500 limit…
+▲ #14  $5,600  ESCALATE  risk 75
 
-Thirty $400 purchases are thirty legal transactions and one fraud. The pattern
-detector is the only thing in the system that can see it.
+  Cumulative Spending Limit: $5,200 across 14 actions this session
+  exceeds the limit of $5,000. Pattern: approval-threshold splitting.
+```
 
 ---
 
-## Quick start
+## Two ways to install it
 
-Two terminals. The engine must be up first — the gateway refuses to start
-without it, because a firewall silently running rules-only is worse than one
-that fails loudly.
-
-```bash
-cp .env.example .env          # OPENAI_API_KEY is the only required value
-npm install
-
-# terminal 1 — the engine
-cd packages/engine && ./setup.sh && ./venv/bin/uvicorn server:app --port 8000
-
-# terminal 2 — the gateway, in front of a real tool server
-export AGENTGATE_ENGINE_URL=http://localhost:8000/evaluate
-export AGENTGATE_ENGINE_KEY="$AGENTGATE_API_KEY"
-npm run mcp -w packages/gateway -- customer-support
-```
-
-Then open **http://localhost:8000/dashboard** — a console for firing actions at
-the engine and watching it decide, including a one-click run of the cumulative
-scenario above.
-
-### Connect a real AI agent
+**1 · MCP gateway.** Point the agent at AgentGate instead of at its tools. It
+mirrors the upstream server, so the agent sees the same tools it always had —
+and never holds a credential for them, so it cannot route around the firewall.
 
 ```bash
 npm run mcp -w packages/gateway -- --config
 ```
 
-Prints a ready `mcpServers` block. Merge it into
-`~/Library/Application Support/Claude/claude_desktop_config.json`, quit Claude
-Desktop with ⌘Q, reopen. Ask it to email a customer their SSN.
+Merge into `~/Library/Application Support/Claude/claude_desktop_config.json`,
+⌘Q, reopen. Works the same for Cursor, Codex, Windsurf and Zed. See
+[gateway/MCP.md](packages/gateway/MCP.md).
 
-Works the same for Cursor, Codex and Windsurf — nothing here is
-Claude-specific. Details in [packages/gateway/MCP.md](packages/gateway/MCP.md).
+**2 · Internal systems.** One `POST /evaluate` before you execute, from any
+language. The three agents on `/live` run this way.
 
 ---
 
 ## Policies are the product
 
-AgentGate ships with 26 default policies, but they are **configuration, not
-code**. A policy is a markdown file:
+26 default policies ship as markdown, but they are **configuration, not code**.
 
-```markdown
-# PII Protection
-Never include personally identifiable information in outbound communications:
-a Social Security number, a payment card number, a bank account, a date of
-birth, or a home address.
-Severity: critical
-Applies to: external_comms, data_access
+`/policies` takes a rule in plain English, or a `.txt`, `.md`, `.pdf` or
+`.docx`. A document containing several rules becomes several policies. Each is
+rewritten into the engine's format, validated, stored in D1 and embedded into
+Vectorize — retrievable by the judge on the **next tool call**. No deploy, no
+restart.
+
+```
+You type:   "Agents must never transfer crypto to an external wallet
+             without treasury sign-off."
+
+Seconds later:
+  transfer_crypto_wallet → BLOCK · risk 100 · Cryptocurrency Transfer Approval
+  retrieved: Cryptocurrency Transfer Approval 0.79
 ```
 
-The judge reads them; it cannot cite a policy that does not exist.
+Submissions that state a *fact* about the organisation rather than a rule
+("we are a healthcare provider in Ontario") are stored as context entries —
+embedded and retrievable, worded so the judge cannot mistake a fact for a
+prohibition.
 
-**Cumulative limits are declared the same way** — what gets counted is the
-enterprise's choice, not ours. A bank counts dollars. A hospital counts patient
-records. A SaaS company counts exported rows.
+**Cumulative limits are declared the same way.** A bank counts dollars, a
+hospital counts patient records, a SaaS company counts exported rows.
 
 ```markdown
 Enforced by: pattern_detector
-Accumulate: sum(toolArgs.amount)     # or count()
+Accumulate: sum(toolArgs.amount)
 Applies to: financial
 Limit: $5,000
 When exceeded: escalate
-Risk floor: 75
 ```
-
-`POST /policies/reload` picks up a new file without dropping session state — an
-operator edits a policy and the control is live.
-
----
-
-## Guardrails on the judge itself
-
-The evaluator gets evaluated. Four checks run on the judge's own output before
-it can influence a decision:
-
-| | |
-| --- | --- |
-| **Structured output** | score clamped to 0–100; a non-numeric score defaults to escalate, never to allow |
-| **Policy grounding** | a cited policy is dropped unless it exists *and* was retrieved for this action |
-| **Consistency** | the identical action twice in one session takes the stricter score |
-| **Latency budget** | an evaluation over budget is flagged on the result |
 
 ---
 
 ## Measured, not claimed
 
 ```
-rule engine      0.45 – 7ms      no LLM, no cost
-engine           mean 1914ms · p50 1815ms · p95 2698ms
-cumulative demo  fires at transaction #13, deterministically
-tests            87 engine · 108/108 gateway · 100 eval scenarios
+rule engine      0.26 – 2ms       no model call, no cost
+engine pipeline  mean 1485ms · p50 1476ms · p95 1793ms
+tests            87 engine · 108/108 gateway
+benchmark        112 labelled scenarios, --model=engine, gpt-4o judge
 ```
 
-**The engine is slower than the original spec assumed (~500ms).** The fast path
-is where low latency lives; the slow path buys judgement.
+**Accuracy 72.3%, macro-F1 0.654.**
 
-**Current benchmark: accuracy 69%, macro-F1 0.607.** Dangerous actions score
-93.3% — it does not miss threats. The losses are over-refusal of things the
-labels call escalations, and most of those trace to an unresolved disagreement
-about spending thresholds rather than to the engine. That number is honest and
-not yet good; see *What's left*.
+| class | recall | precision |
+| --- | --- | --- |
+| block | **100%** | 56.3% |
+| allow | 97.5% | 95.1% |
+| escalate | **16.7%** | 85.7% |
+
+**It does not miss threats** — block recall is 100%. The losses are over-refusal
+of cases the labels call escalations, and most trace to an unresolved
+disagreement about spending thresholds: the scenarios assume a $10,000 limit,
+the engine and the demo use $500 and $5,000. Neither set of numbers satisfies
+the current labels. That number is honest and not yet good.
+
+A regression gate refuses to promote a worse run. A re-run on 2026-09-20 scored
+67.3% and was written to `report.failed.json` rather than becoming the baseline.
+
+`/analytics` reads the report from disk per request — re-run the harness and the
+page updates within ten seconds, no rebuild:
+
+```bash
+npm run eval -w @agentgate/evals -- --model=engine
+# add --update-baseline only if it beats the current number
+```
+
+**Only `--model=engine` produces a number that may be called AgentGate's score.**
+Everything else prints a `NOT A PRODUCT NUMBER` banner.
+
+---
+
+## What is live
+
+| | |
+| --- | --- |
+| **OpenAI** | gpt-4o judge, gpt-4o-mini classifier, text-embedding-3-small |
+| **Cloudflare Vectorize** | policy vectors — live, in-memory mirror covers write lag |
+| **Cloudflare D1** | policies, sessions and the action log — live, durable |
+| **LangFuse** | one trace per evaluation, a span per node — read back onto `/analytics` |
+| **Sentry** | errors and tracing on the gateway |
+| **Zip** | MCP proxy in front of `ziphq-mcp`, plus live budget/vendor grounding |
+
+Both Cloudflare stores fail soft: unreachable means falling back to memory, and
+`GET /health` reports which is actually in use, so a silent fallback cannot be
+mistaken for success.
+
+Nothing the dashboard shows is lost on restart. Verified by killing the gateway
+mid-session: 19 feed rows before, 19 after.
 
 ---
 
 ## Layout
 
-| package | owner | language | what |
-| --- | --- | --- | --- |
-| `gateway` | Person 1 | TypeScript | MCP proxy, 5 rules, Cloudflare Worker, D1, Sentry |
-| `engine` | Person 2 | Python | LangGraph judge, RAG, policy-defined limits, console |
-| `evals` | Person 3 | TypeScript | 100-scenario harness, regression gate, DeepEval cross-check |
-| `demo-agents` | Person 3 | TypeScript | three real MCP tool servers, nine tools |
-| `observability` | Person 3 | TypeScript | Sentry and LangFuse wiring |
-| `shared`, `shared-types` | all | both | the contract |
-| `apps/dashboard` | — | — | **not built yet** |
+| package | language | what |
+| --- | --- | --- |
+| `gateway` | TypeScript | MCP proxy, 5 rules, D1 audit log, Cloudflare Worker, Sentry |
+| `engine` | Python | LangGraph judge, RAG, policy admin, pattern detector |
+| `evals` | TypeScript | 112-scenario harness, regression gate, DeepEval cross-check |
+| `demo-agents` | TypeScript | three MCP tool servers, nine tools |
+| `observability` | TypeScript | Sentry and LangFuse wiring |
+| `apps/dashboard` | TypeScript | the control plane and the live stage |
 
 ---
 
-## Infrastructure
+## TODO before submission
 
-| | |
-| --- | --- |
-| **OpenAI** | gpt-4o judge, gpt-4o-mini classifier, text-embedding-3-small |
-| **Cloudflare Vectorize** | policy vectors — live, with an in-memory fallback |
-| **Cloudflare D1** | session state — live, with an in-memory fallback |
-| **Cloudflare Workers** | the gateway |
-| **LangFuse** | one trace per evaluation, a span per node, token cost per call |
-| **Sentry** | errors and tracing on the gateway |
+- [ ] **Zip** — attach the sponsor integration to the submission. Built and
+      running against the live API ([engine/ZIP.md](packages/engine/ZIP.md));
+      `./demo.sh --zip` turns grounding on. It is **off by default** because the
+      staging tenant had no vendors, which made every payment a correctly
+      refused unapproved payee and pre-empted the cumulative scene. One vendor
+      now exists, so re-check whether it can be on for the demo.
+- [ ] **Cloudflare** — attach the sponsor integration to the submission. D1 and
+      Vectorize are live and verified; the gateway Worker has a `wrangler.jsonc`
+      and deploys, the Python engine cannot run on Workers and needs a container
+      host. See [engine/DEPLOYMENT.md](packages/engine/DEPLOYMENT.md).
+- [ ] Re-run the benchmark after the PII rule change and promote it only if it
+      beats 72.3%.
+- [ ] Nothing is deployed publicly — the demo runs on a laptop.
+- [ ] Resolve the $500 / $10,000 threshold disagreement between the scenario
+      labels and the engine config. Ten minutes of conversation is worth more
+      than any code here.
 
-Both Cloudflare stores fail soft: unreachable means falling back to memory, and
-`GET /health` reports which is actually in use so a silent fallback cannot be
-mistaken for success.
-
----
-
-## What's left
-
-Honest, in priority order.
-
-**The dashboard does not exist.** `apps/dashboard` is a single `package.json`.
-The demo is built around two screens — the agent on the left, the action feed on
-the right — and the right screen is empty. The engine's `/dashboard` console is
-a developer tool, not that.
-
-**No action log is persisted.** The gateway has a D1 `action_logs` schema and
-the engine returns everything a feed would need, but nothing writes the rows.
-Without them the dashboard has nothing to show.
-
-**No Python SDK.** The spec's `from agentgate import wrap` one-liner is not
-built. MCP and HTTP both work today.
-
-**CSE and Zip are built** — see [engine/CSE.md](packages/engine/CSE.md) and
-[engine/ZIP.md](packages/engine/ZIP.md). Zip runs against the live API; CSE has
-only been run against a synthetic capture.
-
-**The eval threshold disagreement is unresolved.** The scenarios assume a
-$10,000 limit; the engine and the demo use $500 and $5,000. Neither set of
-numbers satisfies the current labels. Ten minutes of conversation is worth more
-than any code here.
-
-**Not deployed.** The engine runs on a laptop behind a Cloudflare tunnel. The
-gateway Worker is deployed. See
-[packages/engine/DEPLOYMENT.md](packages/engine/DEPLOYMENT.md) — the engine is
-Python and cannot run on Workers, so it needs a container host while the Worker
-gateway calls it over HTTP.
-
-**The demo bots do not go through the gateway.** `packages/demo-agents` still
-carries `TODO: point at the gateway` — the bots and the eval harness call the
-engine directly, so the rule engine is never exercised end to end and
-`action_logs` stays essentially empty. The gateway works in front of them when
-run by hand (`npm run mcp -w packages/gateway -- customer-support`); nothing
-wires it by default.
-
-**The MCP path does not write to D1.** `withAuditLog` is wired into the Worker's
-HTTP route only, so tool calls through the MCP proxy are judged but not logged.
-
-**Two shared-type definitions have drifted.** `packages/shared/types.ts` has
-`timestamp: Date`; `packages/shared-types` has `timestamp: number`. The gateway
-uses one, the evals the other.
-
-Not started: Gemini second opinion, GPTZero, RAGAS, OpenTelemetry spans, KV
-caching, and a human review queue — an escalation is currently just a block.
+Not started: Python SDK `wrap()`, Gemini second opinion, GPTZero, RAGAS,
+OpenTelemetry spans, KV caching. The review queue displays escalations but
+approve/deny is not wired.
 
 ---
 
@@ -287,10 +270,12 @@ caching, and a human review queue — an escalation is currently just a block.
 
 | | |
 | --- | --- |
-| [engine/ARCHITECTURE.md](packages/engine/ARCHITECTURE.md) | diagrams of every flow, and both integration paths |
+| [engine/ARCHITECTURE.md](packages/engine/ARCHITECTURE.md) | every flow, and both integration paths |
 | [engine/INTEGRATION.md](packages/engine/INTEGRATION.md) | how to call the engine |
 | [engine/RUNBOOK.md](packages/engine/RUNBOOK.md) | seeing it work, and troubleshooting |
 | [engine/DEPLOYMENT.md](packages/engine/DEPLOYMENT.md) | deployment plan and its one constraint |
+| [engine/ZIP.md](packages/engine/ZIP.md) | governing Zip's 131 tools |
+| [engine/CSE.md](packages/engine/CSE.md) | the CSE log analyser |
 | [gateway/MCP.md](packages/gateway/MCP.md) | connecting Claude Desktop, Cursor, Codex |
 
 ---

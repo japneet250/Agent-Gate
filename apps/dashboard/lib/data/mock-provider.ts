@@ -38,6 +38,12 @@ const fixtures = raw as unknown as Fixtures;
 
 export const provenance = fixtures.provenance;
 
+/**
+ * The benchmark from the committed eval run. Shared with live mode, which has
+ * no endpoint of its own for it — see LiveProvider.metrics().
+ */
+export const offlineBenchmark = (): BenchmarkMetrics | null => fixtures.metrics;
+
 /** Pacing. Fast enough to feel live, slow enough to read a block reason.
  *  The burst interval is what the 30-action performance test exercises. */
 const NORMAL_MS = 900;

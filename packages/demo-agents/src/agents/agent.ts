@@ -106,12 +106,20 @@ async function gatedCall(
   // downstream, the gateway's verdict is the real one. Recording the local
   // "allow" would make every log, every eval and the demo itself claim an
   // action succeeded that was in fact stopped.
+  // The gateway puts its real score in the refusal text, because MCP has no
+  // structured channel on a tool result. Inventing a number here instead —
+  // which is what Math.max(local, 70) did — put a score on screen that no part
+  // of the system had actually decided.
+  const downstreamRisk = Number(output?.match(/\[AgentGate risk (\d+)\/100\]/)?.[1]);
+  // An escalation is refused too, but calling it a block on screen contradicts
+  // the dashboard, which correctly shows it waiting in the review queue.
+  const downstreamEscalated = Boolean(output?.includes('needs human review'));
   const finalEvaluation: EvalResult = refusedDownstream
     ? {
         ...evaluation,
-        decision: 'block',
-        reasoning: output ?? 'refused by AgentGate',
-        riskScore: Math.max(evaluation.riskScore, 70),
+        decision: downstreamEscalated ? 'escalate' : 'block',
+        reasoning: (output ?? 'refused by AgentGate').replace(/\s*\[AgentGate risk \d+\/100\]/, ''),
+        riskScore: Number.isFinite(downstreamRisk) ? downstreamRisk : evaluation.riskScore,
       }
     : evaluation;
 
@@ -123,7 +131,9 @@ async function gatedCall(
   console.log(
     `  [${DECISION_MARK[finalEvaluation.decision]} risk=${finalEvaluation.riskScore}] ${opts.toolName}(${JSON.stringify(opts.toolArgs)})`,
   );
-  console.log(`    -> ${evaluation.reasoning}`);
+  // finalEvaluation, not evaluation: when AgentGate refused downstream, the
+  // local gate's reasoning is not what stopped the call.
+  console.log(`    -> ${finalEvaluation.reasoning}`);
   await opts.onStep?.(step);
 
   return { step, ctx: advanceContext(opts.ctx, action, evaluation.decision) };

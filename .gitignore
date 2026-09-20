@@ -28,3 +28,6 @@ __pycache__/
 # ---- merged from Person 1's branch ----
 *.pyc
 .dev.vars
+
+# Demo runtime logs from ./demo.sh
+.demo-logs/

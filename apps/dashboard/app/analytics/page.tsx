@@ -3,8 +3,24 @@
 import { AlertTriangle, FlaskConical, Zap, Brain, Timer } from 'lucide-react';
 import { useMetrics, useActionFeed, provenance } from '@/lib/data';
 import { PerClassChart, ConfusionMatrix, CategoryChart } from '@/components/analytics/charts';
+import { PipelineTelemetry } from '@/components/analytics/telemetry';
+import { LiveOperations } from '@/components/analytics/live-ops';
 import { cn, formatLatency, pct } from '@/lib/utils';
 import { DECISION_FILL } from '@/lib/chart-tokens';
+
+/** "4 minutes ago" beats a bare timestamp for the one question people actually
+ *  have about a benchmark: is this number stale? */
+function ago(iso: string): string {
+  const then = Date.parse(iso);
+  if (!Number.isFinite(then)) return 'at an unknown time';
+  const secs = Math.max(0, Math.round((Date.now() - then) / 1000));
+  if (secs < 90) return 'just now';
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `${mins} minutes ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 36) return `${hrs} hour${hrs === 1 ? '' : 's'} ago`;
+  return `${Math.round(hrs / 24)} days ago`;
+}
 
 export default function AnalyticsPage() {
   const { metrics, loaded, mode } = useMetrics();
@@ -22,6 +38,17 @@ export default function AnalyticsPage() {
           Measured behaviour of the evaluation engine against the labelled scenario suite.
         </p>
       </header>
+
+      {/* Live first, benchmark second. The benchmark is a measurement with a
+          date on it; these two are the system as it is behaving right now, and
+          leading with them is what makes the eval and observability work
+          visible to anyone who opens this page. */}
+      <div className="mb-5 grid gap-4 lg:grid-cols-2">
+        <LiveOperations />
+        <PipelineTelemetry />
+      </div>
+
+      <h2 className="mb-3 text-body font-semibold text-paper">Benchmark — labelled scenario suite</h2>
 
       {!loaded && <div className="surface no-blur rounded-card p-6 text-body text-muted">Loading…</div>}
 
@@ -87,7 +114,10 @@ export default function AnalyticsPage() {
                 {metrics.isProductNumber ? (
                   <>
                     Measured against <strong className="text-paper">{metrics.engine}</strong>, the real engine. This is
-                    AgentGate&apos;s score. Generated {metrics.generatedAt.slice(0, 16).replace('T', ' ')}.
+                    AgentGate&apos;s score. Measured {ago(metrics.generatedAt)} ·{' '}
+                    {metrics.generatedAt.slice(0, 16).replace('T', ' ')}. A benchmark is a batch run,
+                    not a live reading — re-run the harness and this page picks it up within ten
+                    seconds, no reload.
                   </>
                 ) : (
                   <>

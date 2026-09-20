@@ -76,6 +76,12 @@ function claudeDesktopConfig() {
             AGENTGATE_ENGINE_URL:
               process.env.AGENTGATE_ENGINE_URL ?? 'http://localhost:8000/evaluate',
             AGENTGATE_ENGINE_KEY: process.env.AGENTGATE_ENGINE_KEY ?? '<AGENTGATE_API_KEY from .env>',
+            // Claude Desktop spawns this gateway itself, in its own process
+            // with its own in-memory action log. Without the sink, everything
+            // the agent attempts is judged correctly and then shown to nobody:
+            // the left screen refuses and the right screen stays empty.
+            AGENTGATE_ACTION_SINK:
+              process.env.AGENTGATE_ACTION_SINK ?? 'http://localhost:8787/ingest',
           },
         },
       ];

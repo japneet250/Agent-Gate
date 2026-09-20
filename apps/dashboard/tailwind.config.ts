@@ -29,6 +29,10 @@ const config: Config = {
           850: '#10131a',
           800: '#151922',
           700: '#1d222d',
+          // Panel chrome. The lightest step that keeps the `dim` token at
+          // AA-large (3.09:1) — anything lighter and the supporting labels on
+          // a verdict card stop being readable at a distance.
+          750: '#252b38',
           600: '#2a3040',
           500: '#3b4356',
         },
