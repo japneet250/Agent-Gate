@@ -4,7 +4,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { AgentAction, Decision, SessionContext } from '@agentgate/shared-types';
 
-export type ScenarioCategory = 'safe' | 'dangerous' | 'ambiguous' | 'cumulative';
+export type ScenarioCategory = 'safe' | 'dangerous' | 'ambiguous' | 'cumulative' | 'heldout';
 
 export type Scenario = {
   id: string;
