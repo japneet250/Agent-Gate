@@ -34,7 +34,7 @@ flowchart LR
     A["AI agent<br/>Claude · Cursor · Codex"] -->|MCP tool call| G
 
     subgraph GW["Gateway — TypeScript"]
-        G["MCP proxy"] --> R{"rule engine<br/>11 rules · ~1ms · no LLM"}
+        G["MCP proxy"] --> R{"rule engine<br/>5 rules · ~1ms · no LLM"}
     end
 
     R -->|"matched"| D
@@ -136,7 +136,7 @@ Claude-specific. Details in [packages/gateway/MCP.md](packages/gateway/MCP.md).
 
 ## Policies are the product
 
-AgentGate ships with 21 default policies, but they are **configuration, not
+AgentGate ships with 26 default policies, but they are **configuration, not
 code**. A policy is a markdown file:
 
 ```markdown
@@ -188,7 +188,7 @@ it can influence a decision:
 rule engine      0.45 – 7ms      no LLM, no cost
 engine           mean 1914ms · p50 1815ms · p95 2698ms
 cumulative demo  fires at transaction #13, deterministically
-tests            38 engine · 107/108 gateway · 100 eval scenarios
+tests            87 engine · 108/108 gateway · 100 eval scenarios
 ```
 
 **The engine is slower than the original spec assumed (~500ms).** The fast path
@@ -206,7 +206,7 @@ not yet good; see *What's left*.
 
 | package | owner | language | what |
 | --- | --- | --- | --- |
-| `gateway` | Person 1 | TypeScript | MCP proxy, 11 rules, Cloudflare Worker, D1, Sentry |
+| `gateway` | Person 1 | TypeScript | MCP proxy, 5 rules, Cloudflare Worker, D1, Sentry |
 | `engine` | Person 2 | Python | LangGraph judge, RAG, policy-defined limits, console |
 | `evals` | Person 3 | TypeScript | 100-scenario harness, regression gate, DeepEval cross-check |
 | `demo-agents` | Person 3 | TypeScript | three real MCP tool servers, nine tools |
@@ -249,17 +249,37 @@ Without them the dashboard has nothing to show.
 **No Python SDK.** The spec's `from agentgate import wrap` one-liner is not
 built. MCP and HTTP both work today.
 
+**CSE and Zip are built** — see [engine/CSE.md](packages/engine/CSE.md) and
+[engine/ZIP.md](packages/engine/ZIP.md). Zip runs against the live API; CSE has
+only been run against a synthetic capture.
+
 **The eval threshold disagreement is unresolved.** The scenarios assume a
 $10,000 limit; the engine and the demo use $500 and $5,000. Neither set of
 numbers satisfies the current labels. Ten minutes of conversation is worth more
 than any code here.
 
-**Not deployed.** The engine runs on a laptop behind a Cloudflare tunnel. See
+**Not deployed.** The engine runs on a laptop behind a Cloudflare tunnel. The
+gateway Worker is deployed. See
 [packages/engine/DEPLOYMENT.md](packages/engine/DEPLOYMENT.md) — the engine is
 Python and cannot run on Workers, so it needs a container host while the Worker
 gateway calls it over HTTP.
 
-Not started: the CSE log analyzer, the Zip integration, RAGAS.
+**The demo bots do not go through the gateway.** `packages/demo-agents` still
+carries `TODO: point at the gateway` — the bots and the eval harness call the
+engine directly, so the rule engine is never exercised end to end and
+`action_logs` stays essentially empty. The gateway works in front of them when
+run by hand (`npm run mcp -w packages/gateway -- customer-support`); nothing
+wires it by default.
+
+**The MCP path does not write to D1.** `withAuditLog` is wired into the Worker's
+HTTP route only, so tool calls through the MCP proxy are judged but not logged.
+
+**Two shared-type definitions have drifted.** `packages/shared/types.ts` has
+`timestamp: Date`; `packages/shared-types` has `timestamp: number`. The gateway
+uses one, the evals the other.
+
+Not started: Gemini second opinion, GPTZero, RAGAS, OpenTelemetry spans, KV
+caching, and a human review queue — an escalation is currently just a block.
 
 ---
 
