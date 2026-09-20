@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Activity, AlertTriangle, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { PipelineDiagram } from '@/components/demo/flow';
 
 /**
  * Live pipeline telemetry, read back out of LangFuse.
@@ -140,6 +141,10 @@ export function PipelineTelemetry() {
               tone={data.patternAlerts > 0 ? 'escalate' : 'muted'}
             />
           </dl>
+
+          {/* The shape first, then the measurements. The bars below are the
+              same stages, timed. */}
+          <PipelineDiagram className="mb-4 h-auto w-full" />
 
           <div className="space-y-2.5">
             {data.nodes.map((n) => (
