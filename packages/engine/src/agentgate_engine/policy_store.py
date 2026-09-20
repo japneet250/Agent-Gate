@@ -7,6 +7,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from .bm25 import BM25Index
 from .config import config
 from .limits import LimitSpecError, parse_limit_spec
 from .llm import Usage, guarded_call, openai_client, usage_of
@@ -24,6 +25,7 @@ _STOP = {
 
 _store: list[RetrievedPolicy] | None = None
 _tokens: dict[str, set[str]] = {}
+_bm25 = BM25Index()
 _indexed = False
 
 
@@ -80,6 +82,26 @@ def _parse_policy(filename: str, raw: str) -> RetrievedPolicy:
     )
 
 
+def seed_pack() -> dict[str, str]:
+    """The markdown that ships with the product, by policy id.
+
+    A starting point, not the limit: policies created through the API are merged
+    over this and win on an id collision.
+    """
+    return {
+        p.stem: p.read_text(encoding="utf-8")
+        for p in sorted(POLICY_DIR.glob("*.md"))
+    }
+
+
+def _rebuild_index(policies: list[RetrievedPolicy]) -> None:
+    """Rebuild the sparse index. O(corpus), and only when policies change."""
+    _tokens.clear()
+    for p in policies:
+        _tokens[p.id] = _tokenize(f"{p.name} {p.description}")
+    _bm25.build({p.id: f"{p.name} {p.description}" for p in policies})
+
+
 def load_policies() -> list[RetrievedPolicy]:
     global _store
     if _store is None:
@@ -87,9 +109,7 @@ def load_policies() -> list[RetrievedPolicy]:
             _parse_policy(p.name, p.read_text(encoding="utf-8"))
             for p in sorted(POLICY_DIR.glob("*.md"))
         ]
-        _tokens.clear()
-        for p in _store:
-            _tokens[p.id] = _tokenize(f"{p.name} {p.description}")
+        _rebuild_index(_store)
     return _store
 
 
@@ -102,8 +122,7 @@ def set_policies(raw: list[tuple[str, str]] | None) -> None:
         _store = None
         return
     _store = [_parse_policy(name, content) for name, content in raw]
-    for p in _store:
-        _tokens[p.id] = _tokenize(f"{p.name} {p.description}")
+    _rebuild_index(_store)
 
 
 async def _embed(texts: list[str], trace: Any, label: str) -> tuple[list[list[float]], Usage]:
@@ -119,7 +138,7 @@ async def _embed(texts: list[str], trace: Any, label: str) -> tuple[list[list[fl
     return vectors, usage
 
 
-async def warm_policy_index(trace: Any = NOOP_TRACE) -> bool:
+async def warm_policy_index(trace: Any = NOOP_TRACE, force: bool = False) -> bool:
     """Embed every policy once into the configured vector store.
 
     Cheap (19 short docs) and it keeps the hot path down to a single query
@@ -127,6 +146,9 @@ async def warm_policy_index(trace: Any = NOOP_TRACE) -> bool:
     """
     global _indexed
     policies = load_policies()
+    if force:
+        # The corpus changed, so whatever is in the vector index is now stale.
+        _indexed = False
     if _indexed or not config.has_openai():
         return _indexed
     try:
@@ -148,7 +170,7 @@ def is_indexed() -> bool:
 
 
 def _keyword_score(query_tokens: set[str], policy_id: str) -> float:
-    """Keyword overlap in [0,1] — our stand-in for BM25 in the hybrid blend."""
+    """Kept for tests that still score a single policy by overlap."""
     if not query_tokens:
         return 0.0
     hits = len(query_tokens & _tokens.get(policy_id, set()))
@@ -168,7 +190,8 @@ async def retrieve_policies(
     """
     policies = [p for p in load_policies() if p.enabled]
     k = top_k if top_k is not None else config.top_k
-    query_tokens = _tokenize(query)
+    # Okapi BM25, normalised to 0-1 so it can be blended with cosine similarity.
+    sparse = _bm25.normalised(query)
 
     dense: dict[str, float] = {}
     if config.has_openai():
@@ -186,7 +209,7 @@ async def retrieve_policies(
     scored: list[RetrievedPolicy] = []
     for p in policies:
         d = dense.get(p.id, 0.0)
-        s = _keyword_score(query_tokens, p.id)
+        s = sparse.get(p.id, 0.0)
         boost = config.category_boost if category and category in p.applies_to else 0.0
         score = (
             config.dense_weight * d + config.sparse_weight * s + boost if use_dense else s + boost

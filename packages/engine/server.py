@@ -27,6 +27,7 @@ from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from agentgate_engine import (
+    PolicyValidationError,
     cloudflare_configured,
     configure_cloudflare_stores,
     evaluate_detailed,
@@ -39,6 +40,15 @@ from agentgate_engine import (
     warmup,
 )
 from agentgate_engine.config import config
+from agentgate_engine.policy_admin import (
+    D1PolicyBackend,
+    configure_policy_backend,
+    delete_policy,
+    policy_backend,
+    reload_policies,
+    set_enabled,
+    upsert_policy,
+)
 
 _started_at = time.time()
 _stats = {"evaluated": 0, "allow": 0, "block": 0, "escalate": 0}
@@ -53,6 +63,10 @@ async def lifespan(app: FastAPI):
     # Point at Cloudflare when credentials are present; falls back silently
     # to in-memory and says so in /health if it cannot reach them.
     _storage = await configure_cloudflare_stores()
+    if _storage["sessions"].startswith("d1"):
+        from agentgate_engine.stores import session_store
+        configure_policy_backend(D1PolicyBackend(session_store()))
+    await reload_policies()
     print(f"[agentgate] storage — vectors: {_storage['vectors']}, sessions: {_storage['sessions']}")
     indexed = await warmup()
     print(
@@ -178,8 +192,21 @@ async def health() -> dict[str, Any]:
     }
 
 
+async def _stored_ids() -> set[str]:
+    """Which policies came from the store rather than the shipped seed pack.
+
+    Must go through the backend: reading an in-memory attribute silently
+    reported every D1-backed policy as a seed default.
+    """
+    try:
+        return {row["id"] for row in await policy_backend().all()}
+    except Exception:  # noqa: BLE001 — a listing must not fail over provenance
+        return set()
+
+
 @app.get("/policies", dependencies=[Depends(require_key)])
 async def policies() -> list[dict[str, Any]]:
+    stored = await _stored_ids()
     """The policy store, for the dashboard's policy editor."""
     return [
         {
@@ -190,6 +217,7 @@ async def policies() -> list[dict[str, Any]]:
             "appliesTo": p.applies_to,
             "enforcedBy": p.enforced_by,
             "enabled": p.enabled,
+            "source": "stored" if p.id in stored else "seed",
             "limit": (
                 {
                     "accumulate": p.limit.accumulate,
@@ -207,6 +235,53 @@ async def policies() -> list[dict[str, Any]]:
     ]
 
 
+class PolicyBody(BaseModel):
+    """A policy as markdown. The same format as the files on disk, because an
+    operator editing one in a dashboard and one in the repo should not have to
+    learn two things."""
+
+    markdown: str
+    id: str | None = None
+    enabled: bool = True
+
+
+@app.post("/policies", dependencies=[Depends(require_key)], status_code=201)
+async def policy_create(body: PolicyBody) -> dict[str, Any]:
+    """Create or replace a policy. Live for the next evaluation."""
+    try:
+        return await upsert_policy(body.markdown, policy_id=body.id, enabled=body.enabled)
+    except PolicyValidationError as err:
+        # 422, not 500: the operator can fix this, and a vague error would let
+        # them believe a control is on when it never loaded.
+        raise HTTPException(status_code=422, detail=str(err)) from err
+
+
+@app.patch("/policies/{policy_id}", dependencies=[Depends(require_key)])
+async def policy_toggle(policy_id: str, enabled: bool) -> dict[str, Any]:
+    """Turn a policy off without deleting it."""
+    if not await set_enabled(policy_id, enabled):
+        raise HTTPException(status_code=404, detail=f"no stored policy {policy_id!r}")
+    return {"id": policy_id, "enabled": enabled}
+
+
+@app.delete("/policies/{policy_id}", dependencies=[Depends(require_key)])
+async def policy_delete(policy_id: str) -> dict[str, Any]:
+    """Remove a stored policy. A shipped default returns to its seed version."""
+    await delete_policy(policy_id)
+    return {"id": policy_id, "deleted": True}
+
+
+@app.post("/policies/validate", dependencies=[Depends(require_key)])
+async def policy_validate(body: PolicyBody) -> dict[str, Any]:
+    """Check a policy without saving it — for a dashboard editor's live feedback."""
+    from agentgate_engine import validate_markdown
+
+    try:
+        return {"valid": True, **validate_markdown(body.markdown)}
+    except PolicyValidationError as err:
+        return {"valid": False, "error": str(err)}
+
+
 @app.post("/policies/reload", dependencies=[Depends(require_key)])
 async def policies_reload() -> dict[str, Any]:
     """Re-read the policy directory and re-embed, without dropping session state.
@@ -215,9 +290,7 @@ async def policies_reload() -> dict[str, Any]:
     restart — an operator edits a markdown file and the control is live. Session
     counters survive, so a limit can be adjusted mid-session.
     """
-    from agentgate_engine.policy_store import set_policies
-
-    set_policies(None)
+    count = await reload_policies()
     indexed = await warmup()
     loaded = load_policies()
     return {

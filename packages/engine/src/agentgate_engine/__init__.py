@@ -6,7 +6,17 @@
 from agentgate_shared import AgentAction, Decision, EvalResult, Policy, SessionContext
 
 from .engine import EvalDetail, evaluate, evaluate_detailed, reset_sessions, warmup
-from .policy_store import is_indexed, load_policies, retrieve_policies
+from .policy_admin import (
+    PolicyValidationError,
+    configure_policy_backend,
+    delete_policy,
+    policy_backend,
+    reload_policies,
+    set_enabled,
+    upsert_policy,
+    validate_markdown,
+)
+from .policy_store import is_indexed, load_policies, retrieve_policies, seed_pack
 from .state import GuardrailEvent, JudgeVerdict, RetrievedPolicy, SessionFacts
 from .stores import (
     VectorMatch,
@@ -38,6 +48,15 @@ __all__ = [
     "warmup",
     "reset_sessions",
     "load_policies",
+    "seed_pack",
+    "upsert_policy",
+    "delete_policy",
+    "set_enabled",
+    "reload_policies",
+    "validate_markdown",
+    "configure_policy_backend",
+    "policy_backend",
+    "PolicyValidationError",
     "retrieve_policies",
     "is_indexed",
     "configure_stores",
