@@ -7,7 +7,9 @@ dist/
 .DS_Store
 .wrangler/
 
-# P3 eval reports -- regenerate with a run
+# P3 eval reports -- regenerate with a run.
+# report.baseline.json is NOT ignored: it is the accepted --model=engine run,
+# committed so a fresh clone can render the dashboard with real numbers.
 packages/evals/report.json
 packages/evals/report.by-model.json
 packages/evals/report.failed.json

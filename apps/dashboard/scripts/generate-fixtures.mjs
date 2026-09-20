@@ -24,6 +24,10 @@ const APP = path.resolve(HERE, '..');
 const REPO = path.resolve(APP, '..', '..');
 const SCENARIOS = path.join(REPO, 'packages/evals/scenarios.json');
 const REPORT = path.join(REPO, 'packages/evals/report.json');
+// report.json is gitignored (a stub run must never be committed as a product
+// number), so a fresh clone has no benchmark at all. report.baseline.json is the
+// accepted --model=engine run, committed on purpose, and used only as a fallback.
+const BASELINE = path.join(REPO, 'packages/evals/report.baseline.json');
 const POLICY_DIR = path.join(REPO, 'packages/engine/src/agentgate_engine/policies');
 const OUT = path.join(APP, 'lib/data/fixtures.generated.json');
 
@@ -39,17 +43,24 @@ const scenarios = asList(readJson(SCENARIOS));
 
 // ---------------------------------------------------------------- report
 let report = null;
+let reportSource = null;
 if (existsSync(REPORT)) {
   report = readJson(REPORT);
-  if (!report.isProductNumber) {
-    console.warn(
-      `[fixtures] WARNING: report.json is a "${report.engine}" run, not --model=engine.\n` +
-        `           Its numbers are an eval-engineering artifact, not AgentGate's score.\n` +
-        `           The dashboard will label them as such.`,
-    );
-  }
-} else {
-  console.warn(`[fixtures] no report.json — analytics will render an explicit empty state.`);
+  reportSource = 'report.json';
+} else if (existsSync(BASELINE)) {
+  report = readJson(BASELINE);
+  reportSource = 'report.baseline.json';
+  console.warn(`[fixtures] no local report.json — falling back to the committed baseline.`);
+}
+
+if (report && !report.isProductNumber) {
+  console.warn(
+    `[fixtures] WARNING: ${reportSource} is a "${report.engine}" run, not --model=engine.\n` +
+      `           Its numbers are an eval-engineering artifact, not AgentGate's score.\n` +
+      `           The dashboard will label them as such.`,
+  );
+} else if (!report) {
+  console.warn(`[fixtures] no benchmark data — analytics will render an explicit empty state.`);
 }
 
 const resultsById = new Map((report?.results ?? []).map((r) => [r.id, r]));
@@ -307,7 +318,7 @@ console.log(`[fixtures]   moments: ${moments.map((m) => m.id).join(', ') || 'non
 console.log(`[fixtures]   policies: ${policies.length}`);
 console.log(
   metrics
-    ? `[fixtures]   benchmark: ${(metrics.accuracy * 100).toFixed(1)}% (${metrics.engine}), isProductNumber=${metrics.isProductNumber}`
+    ? `[fixtures]   benchmark: ${(metrics.accuracy * 100).toFixed(1)}% (${metrics.engine}), isProductNumber=${metrics.isProductNumber}, from ${reportSource}`
     : `[fixtures]   benchmark: NONE — analytics will show an empty state`,
 );
 console.log(`[fixtures]   engine escalated ${genuinelyEscalated.length} scenario(s) — review queue uses only these`);
