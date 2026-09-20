@@ -29,6 +29,20 @@ def make_action(
     )
 
 
+@pytest.fixture(autouse=True)
+def no_network():
+    """No test may call a real third-party API.
+
+    A real token in .env turns the offline suite into a live integration test
+    that is slow, flaky and spends money — it took the suite from 1s to 12s
+    before this existed.
+    """
+    saved = config.zip_api_token
+    config.zip_api_token = ""
+    yield
+    config.zip_api_token = saved
+
+
 @pytest.fixture
 def action() -> Callable[..., AgentAction]:
     return make_action
@@ -41,6 +55,9 @@ def harness():
 
     def _build(**handlers: Any) -> MockOpenAI:
         config.openai_api_key = "test-key"
+        # The offline suite must not reach the network. A real ZIP_API_TOKEN in
+        # .env would otherwise send every financial evaluation to api.ziphq.com.
+        config.zip_api_token = ""
         configure_stores(vectors=MemoryVectorStore(), sessions=MemorySessionStore())
         set_policies(None)
         reset_breakers()

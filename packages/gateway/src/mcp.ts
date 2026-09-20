@@ -21,17 +21,36 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(here, '../../..');
 const TSX = require.resolve('tsx/cli');
 
-export const SERVERS = ['customer-support', 'procurement', 'coding'] as const;
+export const SERVERS = ['customer-support', 'procurement', 'coding', 'zip'] as const;
 export type ServerName = (typeof SERVERS)[number];
+
+/**
+ * Zip ships its own MCP server (`ziphq-mcp`, run through uv). It exposes 131
+ * tools, twelve of which delete things — users, vendors, subsidiaries — plus the
+ * whole purchase, invoice and budget surface. An agent pointed straight at it
+ * has that reach with nothing in between, which is precisely the gap AgentGate
+ * exists to close.
+ *
+ * Needs ZIP_API_KEY and ZIP_API_URL. ZIP_MCP_MODE=readwrite is what makes the
+ * write tools available at all; leave it unset for a read-only surface.
+ */
+function zipUpstream(): { command: string; args: string[] } {
+  const home = process.env.HOME ?? '';
+  return { command: `${home}/.local/bin/ziphq-mcp`, args: [] };
+}
 
 const serverPath = (s: ServerName) =>
   path.join(REPO, 'packages/demo-agents/src/servers', `${s}.ts`);
 
 /** The argv that puts the gateway in front of `server`. */
 export function proxyCommand(server: ServerName) {
+  const upstream =
+    server === 'zip'
+      ? zipUpstream()
+      : { command: process.execPath, args: [TSX, serverPath(server)] };
   return {
     command: process.execPath,
-    args: [TSX, path.join(here, 'index.ts'), process.execPath, TSX, serverPath(server)],
+    args: [TSX, path.join(here, 'index.ts'), upstream.command, ...upstream.args],
   };
 }
 
@@ -46,7 +65,14 @@ function claudeDesktopConfig() {
           args,
           env: {
             // Claude Desktop launches servers from / with a minimal PATH.
-            PATH: '/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin',
+            PATH: `/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:${process.env.HOME}/.local/bin`,
+            ...(s === 'zip'
+              ? {
+                  ZIP_API_URL: process.env.ZIP_API_URL ?? 'https://staging-api.zip.com',
+                  ZIP_API_KEY: process.env.ZIP_API_KEY ?? '<your Zip API key>',
+                  ZIP_MCP_MODE: process.env.ZIP_MCP_MODE ?? 'readwrite',
+                }
+              : {}),
             AGENTGATE_ENGINE_URL:
               process.env.AGENTGATE_ENGINE_URL ?? 'http://localhost:8000/evaluate',
             AGENTGATE_ENGINE_KEY: process.env.AGENTGATE_ENGINE_KEY ?? '<AGENTGATE_API_KEY from .env>',

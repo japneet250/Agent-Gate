@@ -54,6 +54,13 @@ export async function connectUpstream(spec: UpstreamSpec): Promise<Client> {
     await client.connect(new StdioClientTransport({
       command: spec.command,
       args: spec.args,
+      // The SDK otherwise passes only a safe subset of the environment, which
+      // silently strips a vendor server's own configuration: ziphq-mcp came up
+      // without ZIP_API_KEY or ZIP_MCP_MODE and exposed 60 read tools instead of
+      // 131, so every write tool was invisible and nothing looked wrong.
+      env: Object.fromEntries(
+        Object.entries(process.env).filter(([, v]) => v !== undefined),
+      ) as Record<string, string>,
       stderr: 'inherit',
     }));
     console.error(`[agentgate] upstream: ${describe(spec)}`);

@@ -10,8 +10,12 @@ Two integrations, at different layers.
 
 ## 1. AgentGate in front of Zip's MCP server
 
-Zip publishes a **remote** MCP server. AgentGate is an MCP proxy, so it sits
-between the agent and Zip:
+Zip ships `ziphq-mcp`, run locally through `uv`. It exposes **131 tools — 66 of
+them write or destroy**: `zip_delete_user`, `zip_delete_vendor`,
+`zip_upsert_budgets`, the whole request/PO/invoice/approval surface. An agent
+pointed straight at it has all of that reach with nothing in between.
+
+AgentGate is an MCP proxy, so it sits in the middle:
 
 ```
 Claude / Cursor / your agent
@@ -24,10 +28,27 @@ Claude / Cursor / your agent
 ```
 
 ```bash
-export AGENTGATE_UPSTREAM_TOKEN="$ZIP_MCP_TOKEN"
-npm run mcp -w packages/gateway -- https://<zip-mcp-host>/mcp
-# older servers: AGENTGATE_UPSTREAM_TRANSPORT=sse
+uv tool install ziphq-mcp          # once
+
+export ZIP_API_URL=https://staging-api.zip.com
+export ZIP_API_KEY=<your key from {your-domain}/manage/api-key>
+export ZIP_MCP_MODE=readwrite      # without this you get 60 read tools, not 131
+
+npm run mcp -w packages/gateway -- zip
 ```
+
+Verified against Zip's real server:
+
+```
+AgentGate mirroring 131 Zip tools (66 of them write/destroy)
+
+  REFUSED  3269ms  zip_delete_vendor   "a destructive operation"
+  REFUSED  2503ms  zip_delete_user     "a destructive operation"
+  REFUSED  1811ms  zip_upsert_budgets  "$999,999,999 exceeds the limit"
+```
+
+A remote MCP server over HTTP or SSE also works — pass a URL instead of a server
+name, with `AGENTGATE_UPSTREAM_TOKEN` for auth.
 
 The agent sees Zip's real tools, unchanged. Every call is evaluated first.
 
@@ -68,13 +89,84 @@ any policy file could catch that.
 
 ### Configuration
 
-| variable | default | |
+| variable | default | status |
 | --- | --- | --- |
 | `ZIP_API_TOKEN` | — | required; empty disables grounding entirely |
-| `ZIP_API_BASE` | `https://api.ziphq.com/v1` | |
-| `ZIP_BUDGETS_PATH` | `/budgets` | |
-| `ZIP_VENDORS_PATH` | `/vendors` | |
-| `ZIP_APPROVALS_PATH` | `/approval-chains` | |
+| `ZIP_API_BASE` | `https://staging-api.zip.com` | verified working |
+| `ZIP_VENDORS_PATH` | `/vendors` | verified, returns live data |
+| `ZIP_APPROVALS_PATH` | `/approvals` | verified |
+| `ZIP_BUDGETS_PATH` | `/budgets` | **not readable over REST** — see below |
+
+### The header is `Zip-Api-Key`, not `Authorization: Bearer`
+
+This cost a round of debugging worth writing down. With `Authorization: Bearer`
+the API answers:
+
+```
+{"message":"The provided API key is not valid"}
+```
+
+which reads like a bad key and is not. The key was fine the whole time:
+
+```
+Zip-Api-Key: <key>   ->   {"list":[],"size":0,"total":0}
+```
+
+Responses are enveloped as `{"list": [...], "size": n, "total": n}`, and the
+collection endpoints **reject unknown query parameters with a 400** rather than
+ignoring them — so there is no `?q=` to search with. Filtering happens client
+side.
+
+### Budgets are not readable over REST
+
+`GET /budgets` returns 405 with `Allow: OPTIONS, PUT`. So does every variant
+tried (`/budget-actuals`, `/budgets/search`, `POST /budgets`). Budget state lives
+behind their **MCP** server instead, as `zip_search_budgets`.
+
+The client notices the 405 once and stops asking, rather than paying for the
+round trip on every financial action and flagging the context degraded for a
+call that can never succeed. Restoring the budget half of the grounding means
+reading it through MCP — the gateway already holds an MCP connection to Zip, so
+that is where it belongs.
+
+### What probing the live API established
+
+A 401 means the route exists and only the key was rejected; a 404 means it does
+not exist. Against `api.ziphq.com`, which answers "Welcome to Zip API!" at the
+root:
+
+```
+/vendors           401   exists
+/requests          401   exists
+/approvals         401   exists
+/departments       401   exists
+/users             401   exists
+/budgets           405   exists, but Allow: OPTIONS, PUT — no GET
+/purchase-orders   404
+/approval-chains   404   (my original guess)
+/cost-centers      404
+/me                404
+```
+
+**`/budgets` does not answer GET.** Budget state may live under a different
+route, or be reachable only once authenticated well enough to read their docs.
+That is the one piece of the grounding story still unresolved.
+
+### The token is being rejected
+
+```
+no auth header  →  {"message":"Missing API Key","code":"UNAUTHORIZED"}
+with our token  →  {"message":"The provided API key is not valid"}
+```
+
+The API distinguishes the two, so it is parsing the key and refusing it. Tried
+as `Authorization: Bearer`, `Authorization: Token`, bare `Authorization`,
+`X-Api-Key` and `x-zip-api-key` — all 401. The key is 38 characters, which may
+mean it is truncated.
+
+**Ask Zip for:** a working key for the company they provisioned, the header they
+expect, and whether there is a sandbox host. `api-sandbox.ziphq.com` redirects
+to `api-sandbox.zip.com`, which 404s.
 
 The three lookups run concurrently, because the judge is on a latency budget.
 Every one fails soft: Zip unreachable degrades to policy-only reasoning and says

@@ -122,9 +122,18 @@ class ZipClient:
         self.base = (base or config.zip_api_base).rstrip("/")
         self._token = token or config.zip_api_token
         self._client = httpx.AsyncClient(timeout=timeout)
+        # Zip's REST API does not offer a readable budget route: /budgets allows
+        # only OPTIONS and PUT. Budget state lives behind their MCP server
+        # (zip_search_budgets). Once we have seen the 405 there is no point
+        # paying for the round trip on every financial action, or flagging the
+        # context degraded for a call that can never succeed.
+        self._budgets_readable = True
 
     def _headers(self) -> dict[str, str]:
-        return {"Authorization": f"Bearer {self._token}", "Accept": "application/json"}
+        # Zip uses its own header, NOT Authorization: Bearer. With Bearer the API
+        # answers "The provided API key is not valid", which reads like a bad key
+        # and is not — it cost a round of debugging to find that out.
+        return {"Zip-Api-Key": self._token, "Accept": "application/json"}
 
     async def _get(self, path: str, params: dict[str, Any] | None = None) -> Any:
         res = await self._client.get(f"{self.base}{path}", headers=self._headers(), params=params)
@@ -168,9 +177,18 @@ class ZipClient:
         if isinstance(vendor_doc, dict) and vendor_doc:
             ctx.vendor_name = str(vendor_doc.get("name") or vendor or "")
             status = str(vendor_doc.get("status", "")).lower()
-            ctx.vendor_approved = status in ("approved", "active", "onboarded")
+            # Zip marks records active/inactive rather than carrying an approval
+            # status on every one, so is_active stands in when status is absent.
+            ctx.vendor_approved = (
+                status in ("approved", "active", "onboarded")
+                if status
+                else bool(vendor_doc.get("is_active"))
+            )
         elif vendor:
+            # Asked for a vendor and Zip has no record of it — that IS the
+            # finding, not a gap. An unknown payee is the invoice-fraud vector.
             ctx.vendor_name = str(vendor)
+            ctx.vendor_approved = False
 
         if isinstance(chain_doc, list):
             ctx.approvers_required = [
@@ -181,28 +199,70 @@ class ZipClient:
 
     # --- endpoints, kept separate so a path change is a one-line edit --------
 
-    async def _budget(self, budget: Any) -> dict[str, Any] | None:
-        if not budget:
+    @staticmethod
+    def _unwrap(doc: Any) -> list[dict[str, Any]]:
+        """Zip returns {"list": [...], "size": n, "total": n}."""
+        if isinstance(doc, dict):
+            for key in ("list", "data", "results"):
+                if isinstance(doc.get(key), list):
+                    return doc[key]
+            return [doc]
+        return doc if isinstance(doc, list) else []
+
+    @staticmethod
+    def _match(records: list[dict[str, Any]], needle: Any) -> dict[str, Any] | None:
+        """Find a record by name.
+
+        Zip's collection endpoints reject unknown query parameters with a 400
+        rather than ignoring them, so there is no `?q=` to search with — the
+        filtering happens here.
+        """
+        if not records:
             return None
-        docs = await self._get(config.zip_budgets_path, {"q": str(budget)})
-        items = docs.get("data", docs) if isinstance(docs, dict) else docs
-        return items[0] if isinstance(items, list) and items else (items or None)
+        if not needle:
+            return records[0]
+        want = str(needle).strip().lower()
+        for r in records:
+            for field_name in ("name", "display_name", "legal_name", "title"):
+                value = r.get(field_name)
+                if value and str(value).strip().lower() == want:
+                    return r
+        for r in records:  # fall back to a partial match
+            for field_name in ("name", "display_name"):
+                value = r.get(field_name)
+                if value and want in str(value).strip().lower():
+                    return r
+        return None
+
+    async def _budget(self, budget: Any) -> dict[str, Any] | None:
+        """Budget position.
+
+        GET /budgets is not offered — the route allows only OPTIONS and PUT — so
+        budget state has to come from elsewhere. Left here and failing soft so
+        the rest of the context still assembles.
+        """
+        if not budget or not self._budgets_readable:
+            return None
+        try:
+            return self._match(self._unwrap(await self._get(config.zip_budgets_path)), budget)
+        except httpx.HTTPStatusError as err:
+            if err.response.status_code in (404, 405):
+                self._budgets_readable = False
+                print("[agentgate] Zip has no readable budget endpoint over REST "
+                      "(/budgets allows OPTIONS, PUT only); budget grounding is off. "
+                      "Budget state is available through their MCP server instead.")
+                return None
+            raise
 
     async def _vendor(self, vendor: Any) -> dict[str, Any] | None:
         if not vendor:
             return None
-        docs = await self._get(config.zip_vendors_path, {"q": str(vendor)})
-        items = docs.get("data", docs) if isinstance(docs, dict) else docs
-        return items[0] if isinstance(items, list) and items else (items or None)
+        return self._match(self._unwrap(await self._get(config.zip_vendors_path)), vendor)
 
     async def _approval_chain(self, amount: float, budget: Any) -> list[dict[str, Any]] | None:
         if amount <= 0:
             return None
-        docs = await self._get(
-            config.zip_approvals_path, {"amount": amount, "budget": str(budget or "")}
-        )
-        items = docs.get("data", docs) if isinstance(docs, dict) else docs
-        return items if isinstance(items, list) else None
+        return self._unwrap(await self._get(config.zip_approvals_path)) or None
 
     async def aclose(self) -> None:
         await self._client.aclose()
