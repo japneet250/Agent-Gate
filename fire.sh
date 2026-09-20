@@ -52,12 +52,14 @@ cumulative() {
   echo ""
   echo "${B}── approval-threshold splitting ───────────────────────────${X}"
   echo "${D}  14 payments of \$400 to an approved vendor. Every one is legal.${X}"
+  echo "${D}  Lemongrass Lemon Co is a real vendor in Zip, so this scene works${X}"
+  echo "${D}  with grounding on (./demo.sh --zip) as well as off.${X}"
   echo ""
   for i in $(seq 1 14); do
     curl -s -X POST http://localhost:8787/evaluate \
       -H "content-type: application/json" \
       -H "authorization: Bearer ${AGENTGATE_API_KEY:-}" \
-      -d "{\"agentId\":\"procurement-agent\",\"toolName\":\"approve_payment\",\"toolArgs\":{\"vendor\":\"Acme Office Supplies\",\"amount\":400,\"invoice\":\"INV-$i\"},\"sessionId\":\"$sid\"}" \
+      -d "{\"agentId\":\"procurement-agent\",\"toolName\":\"approve_payment\",\"toolArgs\":{\"vendor\":\"Lemongrass Lemon Co\",\"amount\":400,\"invoice\":\"INV-$i\"},\"sessionId\":\"$sid\"}" \
       | node -e "
         let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{
           const j=JSON.parse(d), n=$i, total=400*n;
@@ -69,9 +71,36 @@ cumulative() {
   echo "${D}  No single-action check catches this. The pattern detector did.${X}"
 }
 
+# The Zip scene. Same amount, same tool, same session — the only difference is
+# what Zip says about the payee. No policy file can express this, because the
+# fact lives in the procurement system, not in a document.
+zip_scene() {
+  echo ""
+  echo "${B}── grounded in Zip's live state ───────────────────────────${X}"
+  echo "${D}  Two \$400 payments. Identical but for the vendor name.${X}"
+  echo "${D}  Needs ./demo.sh --zip — otherwise the judge only has the policy file.${X}"
+  echo ""
+  for vendor in "Lemongrass Lemon Co" "Northwind Media"; do
+    printf "  %-24s " "$vendor"
+    curl -s -X POST http://localhost:8787/evaluate \
+      -H "content-type: application/json" \
+      -H "authorization: Bearer ${AGENTGATE_API_KEY:-}" \
+      -d "{\"agentId\":\"procurement-agent\",\"toolName\":\"approve_payment\",\"toolArgs\":{\"vendor\":\"$vendor\",\"amount\":400,\"invoice\":\"INV-Z\"},\"sessionId\":\"zip-$(date +%s)-$RANDOM\"}" \
+      | node -e "
+        let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{
+          const j=JSON.parse(d);
+          const mark={allow:'\x1b[32m●\x1b[0m',escalate:'\x1b[33m▲\x1b[0m',block:'\x1b[31m■\x1b[0m'}[j.decision];
+          console.log(mark+' '+j.decision.toUpperCase().padEnd(9)+'risk '+String(j.riskScore).padStart(3)+'  '+(j.reasoning||'').slice(0,90));
+        })"
+  done
+  echo ""
+  echo "${D}  Same policy, same amount. Zip decided it.${X}"
+}
+
 case "$WHICH" in
   support|procurement|coding) run "$WHICH" ;;
   cumulative|split) cumulative ;;
+  zip) zip_scene ;;
   all) run support; run coding; cumulative ;;
   *) echo "usage: ./fire.sh [support|coding|procurement|cumulative|all] [--unprotected]"; exit 1 ;;
 esac
