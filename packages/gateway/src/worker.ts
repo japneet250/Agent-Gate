@@ -1,7 +1,7 @@
 import { judgeFromEnv } from './engine.js';
 import { createEvaluator, withAuditLog, type Evaluator } from './evaluate.js';
 import { handleRequest, json } from './handler.js';
-import { createPolicyCache, insertActionLog, type D1Like } from './policies.js';
+import { createPolicyCache, insertActionLog, recentActionLogs, type D1Like } from './policies.js';
 import { configFromEnv } from './rules.js';
 
 // Cloudflare Worker logic (worker-entry.ts is the file wrangler deploys; it wraps this with Sentry): POST /evaluate and GET /health, with decisions logged to D1.
@@ -55,7 +55,15 @@ export function createWorker() {
       const evaluate = DB
         ? withAuditLog(shared.evaluate, (action, result) => void ctx.waitUntil(insertActionLog(DB, action, result)))
         : shared.evaluate;
-      return handleRequest(req, evaluate, { apiKey: env.AGENTGATE_API_KEY });
+      return handleRequest(req, evaluate, {
+        apiKey: env.AGENTGATE_API_KEY,
+        // Only offered when D1 is bound. Without a binding the route answers
+        // 501, which tells the dashboard the feed is unwired rather than
+        // showing it an empty one — those look identical on screen.
+        recentActions: DB
+          ? async (since) => (await recentActionLogs(DB, since)) as never
+          : undefined,
+      });
     },
   };
 }

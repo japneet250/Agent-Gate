@@ -159,7 +159,9 @@ export class LiveProvider implements DataProvider {
 
   async policies(): Promise<Policy[]> {
     try {
-      const res = await fetch(`${ENGINE}/policies`, { cache: 'no-store' });
+      // Through this app's own API route, not the engine directly: the engine
+      // needs a bearer token the browser must never hold.
+      const res = await fetch('/api/policies', { cache: 'no-store' });
       if (!res.ok) return [];
       const raw = (await res.json()) as {
         id: string;

@@ -8,6 +8,7 @@ import { decisionBreadcrumb, reportError } from './monitoring.js';
 //
 //   POST /evaluate   body: { toolName, toolArgs, agentId?, sessionId?, id? }   (snake_case names work too)
 //                    -> 200 { riskScore, decision, reasoning, violatedPolicy?, latencyMs }
+//   GET  /actions    ?since=<epoch ms> -> 200 [ActionLogRow, ...]   the decision feed the dashboard reads
 //   GET  /health     -> 200 { ok: true }
 //
 // It only returns the decision; the caller is responsible for honouring it. The core is a plain
@@ -16,10 +17,40 @@ import { decisionBreadcrumb, reportError } from './monitoring.js';
 
 const MAX_BODY_BYTES = 1_000_000;
 
+/** One decided action, in the column names the D1 `action_logs` table uses. */
+export interface ActionLogRow {
+  action_id: string;
+  created_at: string;
+  agent_id: string;
+  session_id: string;
+  tool_name: string;
+  tool_args: string | null;
+  decision: string;
+  risk_score: number;
+  reasoning: string;
+  violated_policy: string | null;
+  latency_ms: number;
+  category: string | null;
+  degraded: number;
+  decided_by: string | null;
+  retrieved_policies: string | null;
+  pattern_notes: string | null;
+}
+
 export interface HttpOptions {
   /** If set, POST /evaluate requires `Authorization: Bearer <apiKey>`. */
   apiKey?: string;
   maxBodyBytes?: number;
+  /**
+   * Source for GET /actions. The Worker reads D1; a local process keeps a
+   * ring in memory, because there is no D1 binding outside the Worker runtime
+   * and a demo that only works once deployed is not much of a demo.
+   *
+   * Absent means the route answers 501 rather than an empty list — an empty
+   * feed and an unwired feed look identical on screen, and the difference
+   * matters when you are trying to work out why nothing is appearing.
+   */
+  recentActions?: (sinceMs: number) => Promise<ActionLogRow[]>;
 }
 
 export const json = (status: number, body: unknown, headers: Record<string, string> = {}) =>
@@ -63,6 +94,24 @@ export async function handleRequest(req: Request, evaluate: Evaluator, opts: Htt
   const { pathname } = new URL(req.url);
 
   if (pathname === '/health') return req.method === 'GET' ? json(200, { ok: true }) : json(405, { error: 'use GET' }, { allow: 'GET' });
+
+  if (pathname === '/actions') {
+    if (req.method !== 'GET') return json(405, { error: 'use GET' }, { allow: 'GET' });
+    if (!opts.recentActions) {
+      return json(501, { error: 'no action log configured on this gateway' });
+    }
+    const since = Number(new URL(req.url).searchParams.get('since') ?? 0);
+    try {
+      const rows = await opts.recentActions(Number.isFinite(since) ? since : 0);
+      // The dashboard polls this; browsers enforce same-origin, and it is a
+      // read-only feed of already-redacted rows.
+      return json(200, rows, { 'access-control-allow-origin': '*' });
+    } catch (err) {
+      reportError(err, 'GET /actions');
+      return json(500, { error: 'could not read the action log' });
+    }
+  }
+
   if (pathname !== '/evaluate') return json(404, { error: 'not found' });
   if (req.method !== 'POST') return json(405, { error: 'use POST' }, { allow: 'POST' });
   if (opts.apiKey && !authorized(req, opts.apiKey)) return json(401, { error: 'missing or invalid API key' });

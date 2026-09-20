@@ -6,7 +6,12 @@ import { redactArgs } from './redact.js';
 // Minimal shape of a Cloudflare D1 binding (just what we use), so we don't need the Workers type package.
 export interface D1Like {
   prepare(sql: string): {
-    bind(...values: unknown[]): { run(): Promise<unknown> };
+    // Real D1 allows all() after bind() as well as run(); the type only
+    // declared run(), so a bound SELECT did not typecheck.
+    bind(...values: unknown[]): {
+      run(): Promise<unknown>;
+      all<T = Record<string, unknown>>(): Promise<{ results: T[] }>;
+    };
     all<T = Record<string, unknown>>(): Promise<{ results: T[] }>;
   };
 }
@@ -38,6 +43,33 @@ export function createPolicyCache(db: D1Like | undefined, ttlMs = 15_000, now: (
 const json = (v: unknown[] | undefined) => (v === undefined ? null : JSON.stringify(v).slice(0, 4000));
 
 /** Writes one row to `action_logs`. Tool arguments are stored redacted (see redact.ts), never raw. */
+const ACTION_COLUMNS =
+  'action_id, created_at, agent_id, session_id, tool_name, tool_args, decision, ' +
+  'risk_score, reasoning, violated_policy, latency_ms, category, degraded, ' +
+  'decided_by, retrieved_policies, pattern_notes';
+
+/**
+ * The decision feed, newest last so a poller can page forward by timestamp.
+ *
+ * Capped because a dashboard asking for everything since epoch on a busy
+ * gateway would pull the whole table into a browser.
+ */
+export async function recentActionLogs(
+  db: D1Like,
+  sinceMs = 0,
+  limit = 200,
+): Promise<Record<string, unknown>[]> {
+  const since = sinceMs ? new Date(sinceMs).toISOString() : '1970-01-01T00:00:00.000Z';
+  const { results } = await db
+    .prepare(
+      `SELECT ${ACTION_COLUMNS} FROM action_logs WHERE created_at > ?1 ` +
+        `ORDER BY created_at ASC LIMIT ?2`,
+    )
+    .bind(since, limit)
+    .all();
+  return (results ?? []) as Record<string, unknown>[];
+}
+
 export async function insertActionLog(db: D1Like, action: AgentAction, result: Verdict): Promise<void> {
   await db
     .prepare(

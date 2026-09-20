@@ -17,6 +17,11 @@ function fakeDb(disabled: string[] = [], opts: { failReads?: boolean; failWrites
           if (opts.failWrites) throw new Error('d1 down');
           writes.push({ sql, values });
         },
+        // Bound SELECTs (the /actions feed) read through here.
+        all: async () => {
+          if (opts.failReads) throw new Error('d1 down');
+          return { results: [] as never[] };
+        },
       }),
       all: async <T,>() => {
         reads++;

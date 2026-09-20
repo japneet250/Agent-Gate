@@ -1,7 +1,8 @@
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { connectUpstream, parseUpstream } from './upstream.js';
+import { ActionLog } from './action-log.js';
 import { judgeFromEnv } from './engine.js';
-import { createEvaluator } from './evaluate.js';
+import { createEvaluator, withAuditLog } from './evaluate.js';
 import { createGateway } from './gateway.js';
 import { startHttpServer } from './http.js';
 import { initSentryNode } from './sentry-node.js';
@@ -22,7 +23,13 @@ const upstream = await connectUpstream(parseUpstream(argv));
 
 // One evaluator shared by both front doors, so rate limits count MCP and HTTP calls together.
 const judge = judgeFromEnv();
-const evaluate = createEvaluator(undefined, judge);
+// Every decision this process makes goes into the ring, MCP calls included.
+// Previously only the Worker's HTTP route was audited, so tool calls through
+// the MCP proxy — which is the whole product — were judged and then forgotten.
+const actionLog = new ActionLog();
+const evaluate = withAuditLog(createEvaluator(undefined, judge), (action, result) =>
+  actionLog.record(action, result),
+);
 const server = createGateway(upstream, evaluate);
 server.onclose = () => void upstream.close();
 await server.connect(new StdioServerTransport());
@@ -30,7 +37,13 @@ await server.connect(new StdioServerTransport());
 if (process.env.AGENTGATE_HTTP_PORT) {
   const host = process.env.AGENTGATE_HTTP_HOST ?? '127.0.0.1';
   const port = Number(process.env.AGENTGATE_HTTP_PORT);
-  await startHttpServer(evaluate, { port, host, apiKey: process.env.AGENTGATE_API_KEY });
+  await startHttpServer(evaluate, {
+    port, host,
+    apiKey: process.env.AGENTGATE_API_KEY,
+    // Serves GET /actions from the same ring, so the dashboard's live feed sees
+    // MCP traffic too rather than only what came in over HTTP.
+    recentActions: async (since) => actionLog.since(since),
+  });
   console.error(`[agentgate] HTTP evaluate endpoint up on http://${host}:${port}/evaluate`);
 }
 console.error(`[agentgate] AI judge: ${judge ? 'configured' : 'NOT configured (AGENTGATE_ENGINE_URL unset): calls no rule catches are ALLOWED'}`);
