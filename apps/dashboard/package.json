@@ -12,15 +12,17 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "framer-motion": "^11.18.2",
+    "lucide-react": "^1.47.0",
+    "mammoth": "^1.12.3",
     "next": "14.2.35",
     "react": "18.3.1",
     "react-dom": "18.3.1",
-    "framer-motion": "^11.18.2",
     "recharts": "^2.15.4",
-    "lucide-react": "^1.47.0",
-    "clsx": "^2.1.1",
     "tailwind-merge": "^3.7.0",
-    "class-variance-authority": "^0.7.1"
+    "unpdf": "^1.8.1"
   },
   "devDependencies": {
     "@types/node": "^20.16.5",

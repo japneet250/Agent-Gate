@@ -3,6 +3,8 @@
 import { AlertTriangle, FlaskConical, Zap, Brain, Timer } from 'lucide-react';
 import { useMetrics, useActionFeed, provenance } from '@/lib/data';
 import { PerClassChart, ConfusionMatrix, CategoryChart } from '@/components/analytics/charts';
+import { PipelineTelemetry } from '@/components/analytics/telemetry';
+import { LiveOperations } from '@/components/analytics/live-ops';
 import { cn, formatLatency, pct } from '@/lib/utils';
 import { DECISION_FILL } from '@/lib/chart-tokens';
 
@@ -22,6 +24,17 @@ export default function AnalyticsPage() {
           Measured behaviour of the evaluation engine against the labelled scenario suite.
         </p>
       </header>
+
+      {/* Live first, benchmark second. The benchmark is a measurement with a
+          date on it; these two are the system as it is behaving right now, and
+          leading with them is what makes the eval and observability work
+          visible to anyone who opens this page. */}
+      <div className="mb-5 grid gap-4 lg:grid-cols-2">
+        <LiveOperations />
+        <PipelineTelemetry />
+      </div>
+
+      <h2 className="mb-3 text-body font-semibold text-paper">Benchmark — labelled scenario suite</h2>
 
       {!loaded && <div className="surface no-blur rounded-card p-6 text-body text-muted">Loading…</div>}
 

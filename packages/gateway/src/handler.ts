@@ -51,7 +51,20 @@ export interface HttpOptions {
    * matters when you are trying to work out why nothing is appearing.
    */
   recentActions?: (sinceMs: number) => Promise<ActionLogRow[]>;
+  /**
+   * Sink for POST /ingest: rows decided by another gateway process. Agents
+   * spawn their own gateway, so without this the collector's feed only ever
+   * shows traffic that arrived over its own HTTP port.
+   */
+  ingestAction?: (row: ActionLogRow) => void;
 }
+
+/**
+ * Read-only routes are cross-origin on purpose: the dashboard runs on its own
+ * port. POST /evaluate is deliberately NOT included — it spends money and
+ * carries a bearer token, so it stays same-origin.
+ */
+const CORS = { 'access-control-allow-origin': '*' };
 
 export const json = (status: number, body: unknown, headers: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', ...headers } });
@@ -93,7 +106,14 @@ const authorized = (req: Request, apiKey: string) =>
 export async function handleRequest(req: Request, evaluate: Evaluator, opts: HttpOptions = {}): Promise<Response> {
   const { pathname } = new URL(req.url);
 
-  if (pathname === '/health') return req.method === 'GET' ? json(200, { ok: true }) : json(405, { error: 'use GET' }, { allow: 'GET' });
+  // The dashboard is served from another origin (:3100) and probes this to
+  // decide whether to show "backend down". Without the header the browser
+  // blocks the response and a perfectly healthy gateway is reported as dead.
+  if (pathname === '/health') {
+    return req.method === 'GET'
+      ? json(200, { ok: true }, CORS)
+      : json(405, { error: 'use GET' }, { allow: 'GET', ...CORS });
+  }
 
   if (pathname === '/actions') {
     if (req.method !== 'GET') return json(405, { error: 'use GET' }, { allow: 'GET' });
@@ -105,10 +125,25 @@ export async function handleRequest(req: Request, evaluate: Evaluator, opts: Htt
       const rows = await opts.recentActions(Number.isFinite(since) ? since : 0);
       // The dashboard polls this; browsers enforce same-origin, and it is a
       // read-only feed of already-redacted rows.
-      return json(200, rows, { 'access-control-allow-origin': '*' });
+      return json(200, rows, CORS);
     } catch (err) {
       reportError(err, 'GET /actions');
       return json(500, { error: 'could not read the action log' });
+    }
+  }
+
+  if (pathname === '/ingest') {
+    if (req.method !== 'POST') return json(405, { error: 'use POST' }, { allow: 'POST' });
+    if (!opts.ingestAction) return json(501, { error: 'no action log configured on this gateway' });
+    try {
+      const row = (await req.json()) as ActionLogRow;
+      if (!row || typeof row.action_id !== 'string' || typeof row.decision !== 'string') {
+        return json(400, { error: 'not an action row' });
+      }
+      opts.ingestAction(row);
+      return json(202, { ok: true });
+    } catch {
+      return json(400, { error: 'invalid JSON' });
     }
   }
 

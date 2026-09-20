@@ -5,6 +5,47 @@ import type {
   EvaluatedAction,
   Policy,
 } from './types';
+import { offlineBenchmark } from './mock-provider';
+
+const DECISIONS = ['allow', 'escalate', 'block'] as const;
+
+const EMPTY_CONFUSION = Object.fromEntries(
+  DECISIONS.map((d) => [d, Object.fromEntries(DECISIONS.map((e) => [e, 0]))]),
+) as BenchmarkMetrics['confusion'];
+
+/** The report stores per-class metrics as an array keyed by `decision`; the UI
+ *  wants them keyed by decision. */
+function normalisePerClass(raw: unknown): BenchmarkMetrics['perClass'] {
+  const empty = { precision: 0, recall: 0, f1: 0, support: 0 };
+  const out = Object.fromEntries(DECISIONS.map((d) => [d, { ...empty }])) as BenchmarkMetrics['perClass'];
+  if (Array.isArray(raw)) {
+    for (const p of raw) {
+      const d = p?.decision as (typeof DECISIONS)[number] | undefined;
+      if (d && d in out) {
+        out[d] = {
+          precision: p.precision ?? 0,
+          recall: p.recall ?? 0,
+          f1: p.f1 ?? 0,
+          support: p.support ?? 0,
+        };
+      }
+    }
+  } else if (raw && typeof raw === 'object') {
+    for (const d of DECISIONS) {
+      const p = (raw as Record<string, typeof empty>)[d];
+      if (p) out[d] = { ...empty, ...p };
+    }
+  }
+  return out;
+}
+
+/** byCategory arrives as { safe: {total, accuracy}, ... }. */
+function normaliseCategories(raw: unknown): BenchmarkMetrics['byCategory'] {
+  if (!raw || typeof raw !== 'object') return [];
+  return Object.entries(raw as Record<string, { total?: number; accuracy?: number }>).map(
+    ([category, v]) => ({ category, n: v?.total ?? 0, accuracy: v?.accuracy ?? 0 }),
+  );
+}
 
 /**
  * Live backend adapter.
@@ -150,11 +191,49 @@ export class LiveProvider implements DataProvider {
     }
   }
 
-  /** Live mode has no benchmark endpoint — the eval number is a P3 artifact
-   *  produced offline, not something the running system reports. Returning null
-   *  makes the analytics layer say so instead of inventing one. */
+  /**
+   * The benchmark is an offline artifact: it comes from running the labelled
+   * scenario suite through the engine, and a running gateway has no endpoint
+   * that reports it. That does not make it unshowable in live mode — it makes
+   * it a measurement with a date on it, like any benchmark.
+   *
+   * So live mode serves the same committed `--model=engine` run that mock mode
+   * does, and the analytics page states where it came from and when. Returning
+   * null instead left the main measurement screen empty during a live demo,
+   * which is a worse failure than showing a real number with its provenance
+   * attached. The NOT A PRODUCT NUMBER guard still applies: a stub run is
+   * labelled as one here exactly as it is in mock mode.
+   */
   async metrics(): Promise<BenchmarkMetrics | null> {
-    return null;
+    try {
+      // Read from disk through this app's API route, not from the bundle. A
+      // benchmark baked in at build time cannot change when the harness is
+      // re-run, which made re-measuring invisible until someone rebuilt.
+      const res = await fetch('/api/benchmark', { cache: 'no-store' });
+      if (res.ok) {
+        const b = await res.json();
+        if (b && typeof b.accuracy === 'number') {
+          return {
+            accuracy: b.accuracy,
+            macroF1: b.macroF1 ?? 0,
+            weightedF1: b.weightedF1 ?? undefined,
+            perClass: normalisePerClass(b.perClass),
+            confusion: b.confusion ?? EMPTY_CONFUSION,
+            byCategory: normaliseCategories(b.byCategory),
+            latency: b.latency ?? { meanMs: 0, p50Ms: 0, p95Ms: 0, maxMs: 0 },
+            scenarioCount: b.scenarioCount ?? 0,
+            isProductNumber: Boolean(b.isProductNumber),
+            engine: b.engine ?? 'unknown',
+            generatedAt: b.generatedAt ?? b.fileModifiedAt ?? '',
+          };
+        }
+      }
+    } catch {
+      // Fall through to the committed baseline below.
+    }
+    // The route is the source of truth; the bundled copy is the fallback so a
+    // demo still has its numbers if the filesystem read fails.
+    return offlineBenchmark();
   }
 
   async policies(): Promise<Policy[]> {

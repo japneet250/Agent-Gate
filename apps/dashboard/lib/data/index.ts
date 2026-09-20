@@ -126,14 +126,18 @@ export function useMetrics() {
 export function usePolicies() {
   const provider = useMemo(getProvider, []);
   const [policies, setPolicies] = useState<Policy[]>([]);
+  // Bumping this refetches. A policy published from the composer has to appear
+  // in the same list as every other policy, not in a separate pending state —
+  // the whole claim is that it is now live.
+  const [nonce, setNonce] = useState(0);
   useEffect(() => {
     let alive = true;
     void provider.policies().then((p) => alive && setPolicies(p));
     return () => {
       alive = false;
     };
-  }, [provider]);
-  return policies;
+  }, [provider, nonce]);
+  return { policies, refresh: () => setNonce((n) => n + 1) };
 }
 
 /** Measures actual frame rate. Used by the burst test so "60fps" is an observed

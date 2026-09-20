@@ -64,10 +64,20 @@ export function createGateway(upstream: Client, evaluate: Evaluator = createEval
       case 'allow':
         return (await upstream.callTool({ name, arguments: args })) as CallToolResult;
       case 'escalate':
-        // Escalation has no reviewer yet, so it is logged and blocked.
-        return blocked(`This action needs review and was blocked because: ${result.reasoning}`);
+        // Escalation has no auto-approver: it is logged, queued for a human,
+        // and refused in the meantime. A firewall that waits is still a block.
+        return blocked(
+          `This action needs human review and was held because: ${result.reasoning}` +
+            ` [AgentGate risk ${result.riskScore}/100]`,
+        );
       default:
-        return blocked(`This action was blocked because: ${result.reasoning}`);
+        // The score rides along in the text because MCP gives a tool result no
+        // structured metadata channel — and because an agent that repeats this
+        // verbatim is showing the audience the real number.
+        return blocked(
+          `This action was blocked because: ${result.reasoning}` +
+            ` [AgentGate risk ${result.riskScore}/100]`,
+        );
     }
   });
 
