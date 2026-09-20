@@ -291,6 +291,138 @@ When exceeded: escalate
 
 ---
 
+## RAG — grounding every decision in real policy
+
+The judge is never asked "is this dangerous?" in the abstract. It is handed the
+policies that actually bear on the action, retrieved fresh for every call.
+
+```mermaid
+flowchart LR
+    A["Tool call<br/>name + arguments"] --> Q["Query builder<br/>+ detected PII kinds"]
+    Q --> D["Dense<br/>text-embedding-3-small<br/>Cloudflare Vectorize"]
+    Q --> S["Sparse<br/>BM25 over policy text"]
+    D --> F["Fusion<br/>0.7·dense + 0.3·sparse<br/>+0.15 category boost"]
+    S --> F
+    F --> K["top-5 policies<br/>with relevance scores"]
+    K --> J["Risk judge"]
+    J --> G["Grounding check<br/>a cited policy must exist<br/>AND have been retrieved"]
+```
+
+**The query is enriched, not raw.** A tool call becomes
+`Category financial. Tool "approve_payment" called with arguments: {…}`,
+annotated with the *kinds* of sensitive data the rule engine detected in the
+arguments. So an action never containing the word "PII" still retrieves the PII
+policy.
+
+| | |
+| --- | --- |
+| **Embedding** | `text-embedding-3-small` |
+| **Vector store** | Cloudflare Vectorize, with an in-memory mirror covering write lag |
+| **Sparse** | BM25 (k₁/b = 0.75) over the policy corpus |
+| **Fusion** | `0.7 · dense + 0.3 · sparse`, `+0.15` when the policy applies to the classified category |
+| **top-K** | 5 |
+| **Degrade** | embeddings unavailable → keyword-only, and `/health` says so |
+
+Retrieval is not decoration: **a cited policy is dropped unless it exists in the
+store *and* was retrieved for this action.** The judge cannot invent a rule to
+justify a refusal.
+
+```
+transfer_crypto_wallet → BLOCK · risk 100
+retrieved: Cryptocurrency Transfer Approval 0.79 · Single Transaction Limit 0.42
+violated:  Cryptocurrency Transfer Approval
+```
+
+---
+
+## Evals — the part that makes it a claim instead of a vibe
+
+A firewall nobody measured is a firewall nobody should trust.
+
+**112 labelled scenarios**, hand-written to cover the failure modes that matter:
+
+| set | n | expected |
+| --- | --- | --- |
+| safe | 40 | allow |
+| dangerous | 30 | block |
+| ambiguous | 20 | escalate |
+| cumulative | 10 | only decidable from `priorActions` |
+| held out | 12 | never used while tuning |
+
+```bash
+npm run eval -w @agentgate/evals -- --model=engine
+```
+
+### What the harness refuses to do
+
+- **`invalid` and `skipped` are tracked separately from wrong answers.** A
+  schema violation or a rate-limit timeout is an eval-engineering problem, not a
+  model error, and averaging them in flatters the score.
+- **Only `--model=engine` produces a product number.** Every other run prints a
+  `NOT A PRODUCT NUMBER` banner, because scoring a stub under the engine's name
+  is how teams end up quoting a figure their system never earned.
+- **A regression gate promotes nothing that got worse.** Absolute floors
+  (macro-F1 ≥ 0.8, per-class recall ≥ 0.7) plus a diff against the baseline. A
+  re-run this morning scored 67.3% against a 72.3% baseline and was written to
+  `report.failed.json` instead of replacing it.
+
+### DeepEval cross-check
+
+A second, independent scorer over the same run — deterministic decision
+correctness that needs no judge model and therefore cannot itself drift, with an
+optional LLM-scored reasoning-quality metric behind `--geval`.
+
+```bash
+cd packages/evals/frameworks/deepeval
+./setup.sh                          # its own venv — deepeval pulls a large tree
+./venv/bin/python run_deepeval.py   # offline cross-check, no API spend
+```
+
+### Red-team probing
+
+Probes the decision boundary directly — adversarial phrasings of actions that
+should be refused, to find where a reframing flips a verdict.
+
+```bash
+cd packages/engine && ./venv/bin/python -m agentgate_engine.redteam
+```
+
+---
+
+## LLMOps — every evaluation is traced, and we read it
+
+Observability that nobody looks at is a dependency, not a practice. AgentGate's
+traces are **read back into the product**: `/analytics` queries the LangFuse API
+and renders per-node latency next to the pipeline diagram.
+
+```
+agentgate.evaluate                 2,393ms  (end to end)
+  ├─ classifier.run                  497ms   21%   gpt-4o-mini
+  ├─ policy_retriever.search         488ms   20%   Vectorize + BM25
+  ├─ risk_judge.evaluate             942ms   39%   gpt-4o
+  ├─ decision_gate.decide              0ms    0%   no model
+  └─ pattern_detector.check          307ms   13%   no model
+```
+
+**That table is why the rule engine exists.** The judge is 39% of the latency,
+so anything a regex can answer never reaches a model — and most calls don't:
+the fast path returns in **0.26–2ms at zero cost**.
+
+| Signal | Tool | What it carries |
+| --- | --- | --- |
+| Per-node traces | LangFuse | one trace per evaluation, a span per pipeline node, generations for each model call |
+| Distributed tracing | Sentry | `tracesSampleRate: 1.0` across gateway and Worker |
+| Structured logs | Sentry | one decision-level log per verdict — `blocked` logs at error, `escalate` at warn |
+| Errors | Sentry | on the Node gateway **and** on the Worker via `@sentry/cloudflare` |
+| Degradation | `GET /health` | reports which stores are *actually* in use, so a silent fallback to memory cannot be mistaken for success |
+
+**Not shown: token cost.** The generations arrive without usage or model pricing
+attached, so `/analytics` renders latency and call counts and says nothing about
+spend. An invented dollar figure on a page about honest measurement is worse
+than a missing one.
+
+---
+
 ## Measured, not claimed
 
 ```
