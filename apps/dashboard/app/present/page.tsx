@@ -68,9 +68,6 @@ export default function PresentPage() {
               <Fig value={pct(metrics.accuracy, 1)} label="decision accuracy" />
               <Fig value={pct(metrics.perClass.block.recall, 0)} label="block recall" tone="text-allow" />
               <Fig value={pct(metrics.perClass.escalate.recall, 0)} label="escalate recall" tone="text-block" />
-              <p className="max-w-[16rem] text-meta leading-relaxed text-dim">
-                The third number is bad, and it is on the slide. It is the calibration work still in front of us.
-              </p>
             </div>
           )}
         </motion.section>
