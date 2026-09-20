@@ -1,0 +1,26 @@
+{
+  "name": "@agentgate/observability",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./load-env": "./src/load-env.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "verify": "tsx src/verify.ts"
+  },
+  "dependencies": {
+    "@agentgate/shared-types": "*",
+    "@sentry/node": "^10.75.0",
+    "langfuse": "^3.29.1",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.16.5",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.2"
+  }
+}

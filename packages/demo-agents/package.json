@@ -1,0 +1,30 @@
+{
+  "name": "@agentgate/demo-agents",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "server:customer-support": "tsx src/servers/customer-support.ts",
+    "server:procurement": "tsx src/servers/procurement.ts",
+    "server:coding": "tsx src/servers/coding.ts",
+    "agent": "tsx src/agents/cli.ts",
+    "smoke": "tsx src/servers/smoke.ts"
+  },
+  "dependencies": {
+    "@agentgate/shared-types": "*",
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "dotenv": "^16.4.5",
+    "openai": "^4.67.3",
+    "zod": "^3.23.8",
+    "zod-to-json-schema": "^3.23.3",
+    "@agentgate/evals": "*",
+    "@agentgate/observability": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.16.5",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.2"
+  }
+}
