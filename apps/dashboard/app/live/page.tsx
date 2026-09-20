@@ -50,8 +50,8 @@ export default function LivePage() {
         </header>
       </section>
 
-      <section className="surface no-blur mb-6 overflow-x-auto rounded-card p-4">
-        <ArchitectureDiagram className="h-auto w-full min-w-[56rem]" />
+      <section className="surface no-blur mb-5 overflow-x-auto rounded-card px-4 py-3">
+        <ArchitectureDiagram className="h-auto w-full min-w-[46rem]" />
       </section>
 
       <section className="mb-6 grid gap-3 md:grid-cols-2">
