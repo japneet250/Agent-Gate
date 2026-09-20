@@ -82,7 +82,7 @@ async function gatedCall(
     ctx: SessionContext;
     toolName: string;
     toolArgs: Record<string, unknown>;
-    exec: (name: string, args: Record<string, unknown>) => Promise<string>;
+    exec: (name: string, args: Record<string, unknown>) => Promise<{ ok: boolean; text: string }>;
     onStep?: RunOptions['onStep'];
   },
 ): Promise<{ step: StepLog; ctx: SessionContext }> {
@@ -90,15 +90,38 @@ async function gatedCall(
   const evaluation = await opts.gate(action, opts.ctx);
 
   let output: string | undefined;
+  let refusedDownstream = false;
   if (evaluation.decision === 'allow') {
-    output = await opts.exec(opts.toolName, opts.toolArgs);
+    const res = await opts.exec(opts.toolName, opts.toolArgs);
+    output = res.text;
+    // The gateway refuses with an MCP error rather than an exception, so a
+    // refusal has to be read off the result. Treating it as success would have
+    // the agent report an email as sent that AgentGate had just stopped.
+    if (!res.ok) refusedDownstream = true;
   } else {
     output = undefined;
   }
 
-  const step: StepLog = { action, evaluation, output };
+  // When the agent's own gate allowed a call but AgentGate refused it
+  // downstream, the gateway's verdict is the real one. Recording the local
+  // "allow" would make every log, every eval and the demo itself claim an
+  // action succeeded that was in fact stopped.
+  const finalEvaluation: EvalResult = refusedDownstream
+    ? {
+        ...evaluation,
+        decision: 'block',
+        reasoning: output ?? 'refused by AgentGate',
+        riskScore: Math.max(evaluation.riskScore, 70),
+      }
+    : evaluation;
+
+  const step: StepLog = {
+    action,
+    evaluation: finalEvaluation,
+    output: refusedDownstream ? undefined : output,
+  };
   console.log(
-    `  [${DECISION_MARK[evaluation.decision]} risk=${evaluation.riskScore}] ${opts.toolName}(${JSON.stringify(opts.toolArgs)})`,
+    `  [${DECISION_MARK[finalEvaluation.decision]} risk=${finalEvaluation.riskScore}] ${opts.toolName}(${JSON.stringify(opts.toolArgs)})`,
   );
   console.log(`    -> ${evaluation.reasoning}`);
   await opts.onStep?.(step);
