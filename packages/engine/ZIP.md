@@ -92,10 +92,42 @@ any policy file could catch that.
 | variable | default | status |
 | --- | --- | --- |
 | `ZIP_API_TOKEN` | — | required; empty disables grounding entirely |
-| `ZIP_API_BASE` | `https://api.ziphq.com` | **verified** — no `/v1` prefix |
-| `ZIP_VENDORS_PATH` | `/vendors` | **verified** the route exists |
-| `ZIP_APPROVALS_PATH` | `/approvals` | **verified** (my first guess `/approval-chains` was a 404) |
-| `ZIP_BUDGETS_PATH` | `/budgets` | exists but **rejects GET** — see below |
+| `ZIP_API_BASE` | `https://staging-api.zip.com` | verified working |
+| `ZIP_VENDORS_PATH` | `/vendors` | verified, returns live data |
+| `ZIP_APPROVALS_PATH` | `/approvals` | verified |
+| `ZIP_BUDGETS_PATH` | `/budgets` | **not readable over REST** — see below |
+
+### The header is `Zip-Api-Key`, not `Authorization: Bearer`
+
+This cost a round of debugging worth writing down. With `Authorization: Bearer`
+the API answers:
+
+```
+{"message":"The provided API key is not valid"}
+```
+
+which reads like a bad key and is not. The key was fine the whole time:
+
+```
+Zip-Api-Key: <key>   ->   {"list":[],"size":0,"total":0}
+```
+
+Responses are enveloped as `{"list": [...], "size": n, "total": n}`, and the
+collection endpoints **reject unknown query parameters with a 400** rather than
+ignoring them — so there is no `?q=` to search with. Filtering happens client
+side.
+
+### Budgets are not readable over REST
+
+`GET /budgets` returns 405 with `Allow: OPTIONS, PUT`. So does every variant
+tried (`/budget-actuals`, `/budgets/search`, `POST /budgets`). Budget state lives
+behind their **MCP** server instead, as `zip_search_budgets`.
+
+The client notices the 405 once and stops asking, rather than paying for the
+round trip on every financial action and flagging the context degraded for a
+call that can never succeed. Restoring the budget half of the grounding means
+reading it through MCP — the gateway already holds an MCP connection to Zip, so
+that is where it belongs.
 
 ### What probing the live API established
 
