@@ -70,7 +70,7 @@ if [[ -f packages/evals/report.json ]] \
 fi
 
 if [[ $WITH_ZIP == 1 ]]; then
-  ZIP_TOKEN_FOR_ENGINE="${ZIP_API_TOKEN:-}"
+  ZIP_TOKEN_FOR_ENGINE="${ZIP_API_TOKEN:-${ZIP_API_KEY:-}}"
 else
   ZIP_TOKEN_FOR_ENGINE=""
 fi
@@ -91,7 +91,8 @@ else
   # vendors — so every payment is correctly refused as an unapproved payee and
   # the cumulative-spend scene never gets to happen. Off by default; ./demo.sh
   # --zip turns it on for the scene that is actually about Zip.
-  ( cd packages/engine && ZIP_API_TOKEN="$ZIP_TOKEN_FOR_ENGINE" \
+  # The engine also accepts Zip's own name, ZIP_API_KEY, so blank both or a .env using it turns Zip on.
+  ( cd packages/engine && ZIP_API_TOKEN="$ZIP_TOKEN_FOR_ENGINE" ZIP_API_KEY="$ZIP_TOKEN_FOR_ENGINE" \
       nohup ./venv/bin/uvicorn server:app --port "$ENGINE_PORT" \
       > "$LOGS/engine.log" 2>&1 & )
   for _ in $(seq 1 40); do

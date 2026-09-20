@@ -14,7 +14,7 @@ from .guardrails import check_latency_budget
 from .policy_store import is_indexed, load_policies, warm_policy_index
 from .state import GuardrailEvent, JudgeVerdict, SessionFacts
 from .stores import session_store
-from .zip_client import zip_context, zip_configured
+from .zip_client import NO_DATA_LINE, is_procurement_action, zip_configured, zip_context
 from .trace import start_trace
 
 
@@ -107,13 +107,15 @@ async def evaluate_detailed(
         # money-moving tools: a customer lookup has no budget to consult, and
         # the round trip is not free.
         zip_facts: list[str] | None = None
-        if zip_configured():
+        if zip_configured() and is_procurement_action(action.tool_name):
             ctx = await zip_context(action.tool_args or {})
             if ctx is not None:
                 from .zip_client import extract_amount as _amt
 
                 lines = ctx.as_prompt_lines(_amt(action.tool_args or {}))
-                zip_facts = lines or None
+                # Consulted and empty is said out loud, never left as a blank
+                # that reads the same as "grounding is off".
+                zip_facts = lines or [NO_DATA_LINE]
 
         state = await get_graph().ainvoke(
             {

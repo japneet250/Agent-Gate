@@ -15,6 +15,8 @@ import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { loadZipEnv } from './env-file.js';
+import { aliasZipEnv, zipIsReadOnly, zipProblems, zipUpstream } from './zip-upstream.js';
 
 const require = createRequire(import.meta.url);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -33,11 +35,8 @@ export type ServerName = (typeof SERVERS)[number];
  *
  * Needs ZIP_API_KEY and ZIP_API_URL. ZIP_MCP_MODE=readwrite is what makes the
  * write tools available at all; leave it unset for a read-only surface.
+ * How it is launched (uv, a tool install, or ZIP_MCP_COMMAND) lives in zip-upstream.ts.
  */
-function zipUpstream(): { command: string; args: string[] } {
-  const home = process.env.HOME ?? '';
-  return { command: `${home}/.local/bin/ziphq-mcp`, args: [] };
-}
 
 const serverPath = (s: ServerName) =>
   path.join(REPO, 'packages/demo-agents/src/servers', `${s}.ts`);
@@ -119,6 +118,32 @@ async function main() {
     console.error(`usage: npm run mcp -w packages/gateway -- <${SERVERS.join('|')}>`);
     console.error(`       npm run mcp -w packages/gateway -- --config`);
     process.exit(1);
+  }
+
+  if (arg === 'zip') {
+    // The gateway does not read .env, so pick up ZIP_* from it here: otherwise a key in .env is invisible
+    // and ziphq-mcp starts unconfigured and quietly exposes the wrong tools.
+    const loaded = loadZipEnv(path.join(REPO, '.env'));
+    if (loaded.length) console.error(`[agentgate] zip: read ${loaded.join(', ')} from .env`);
+
+    const aliased = aliasZipEnv();
+    if (aliased.length) console.error(`[agentgate] zip: filled ${aliased.join(', ')} from its counterpart`);
+
+    const problems = zipProblems();
+    if (problems.length) {
+      console.error('[agentgate] refusing to start Zip:');
+      for (const p of problems) console.error(`  - ${p}`);
+      process.exit(1);
+    }
+    if (zipIsReadOnly()) {
+      console.error('[agentgate] warning: ZIP_MCP_MODE is not "readwrite", so Zip exposes only its ~60 read tools, not all 131.');
+    }
+    const via = zipUpstream();
+    console.error(`[agentgate] zip: launching via ${via.via} — ${via.command} ${via.args.join(' ')}`);
+    if (via.via === 'missing') {
+      console.error('[agentgate] uv was not found. Install it (brew install uv) or set ZIP_MCP_COMMAND.');
+      process.exit(1);
+    }
   }
 
   const problem = await judgeReachable();

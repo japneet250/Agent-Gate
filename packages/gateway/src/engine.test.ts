@@ -75,6 +75,23 @@ describe('AI judge client', () => {
     }
   });
 
+  it('keeps what Zip said, and drops it when the engine sent nothing usable', async () => {
+    const facts = ["vendor 'Acme' is NOT on the approved vendor list", 'budget \'Q3\': USD 2,100 remaining of 80,000 (97% already committed)'];
+    const withFacts = await fakeEngine(() => ({ body: { riskScore: 70, decision: 'block', reasoning: 'r', latencyMs: 5, zipFacts: facts } }));
+    const snake = await fakeEngine(() => ({ body: { risk_score: 70, decision: 'block', reasoning: 'r', latency_ms: 5, zip_facts: facts } }));
+    const nulls = await fakeEngine(() => ({ body: { riskScore: 10, decision: 'allow', reasoning: 'r', latencyMs: 5, zipFacts: null } }));
+    const junk = await fakeEngine(() => ({ body: { riskScore: 10, decision: 'allow', reasoning: 'r', latencyMs: 5, zipFacts: [1, null, '', { a: 1 }] } }));
+    try {
+      assert.deepEqual((await createEngineJudge({ url: withFacts.url })(action('x'))).zipFacts, facts);
+      assert.deepEqual((await createEngineJudge({ url: snake.url })(action('x'))).zipFacts, facts);
+      // null means "Zip was not consulted": the field must be absent, not an empty list that looks like "consulted, nothing found".
+      assert.equal('zipFacts' in (await createEngineJudge({ url: nulls.url })(action('x'))), false);
+      assert.equal('zipFacts' in (await createEngineJudge({ url: junk.url })(action('x'))), false);
+    } finally {
+      await Promise.all([withFacts.close(), snake.close(), nulls.close(), junk.close()]);
+    }
+  });
+
   it('waits longer than the engine\'s own 25s judge timeout by default', async () => {
     const judge = createEngineJudge({
       url: 'http://engine.test',

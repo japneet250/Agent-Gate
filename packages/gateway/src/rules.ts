@@ -72,6 +72,15 @@ function collectFields(value: unknown, path = '', key = '', out: Field[] = [], d
     for (const [k, v] of Object.entries(value)) collectFields(v, path ? `${path}.${k}` : k, k, out, depth + 1);
   } else if (value !== null && value !== undefined) {
     out.push({ path: path || '(root)', key, value });
+    // Some MCP servers (Zip's among them) take one `data` argument that is a JSON *string*. Read what is inside it
+    // as well, so an amount in there meets the spend limit. The raw text is still scanned above, unchanged.
+    if (typeof value === 'string' && value.length < 20_000 && (value[0] === '{' || value[0] === '[')) {
+      try {
+        collectFields(JSON.parse(value), path, key, out, depth + 1);
+      } catch {
+        /* not JSON: it stays plain text */
+      }
+    }
   }
   return out;
 }

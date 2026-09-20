@@ -2,6 +2,7 @@ import type { AgentAction } from '@agentgate/shared';
 import type { Verdict } from './evaluate.js';
 import { reportError } from './monitoring.js';
 import { redactArgs } from './redact.js';
+import { maskPii } from './rules.js';
 
 // Minimal shape of a Cloudflare D1 binding (just what we use), so we don't need the Workers type package.
 export interface D1Like {
@@ -46,7 +47,7 @@ const json = (v: unknown[] | undefined) => (v === undefined ? null : JSON.string
 const ACTION_COLUMNS =
   'action_id, created_at, agent_id, session_id, tool_name, tool_args, decision, ' +
   'risk_score, reasoning, violated_policy, latency_ms, category, degraded, ' +
-  'decided_by, retrieved_policies, pattern_notes';
+  'decided_by, retrieved_policies, pattern_notes, zip_facts';
 
 /**
  * The decision feed, newest last so a poller can page forward by timestamp.
@@ -75,8 +76,8 @@ export async function insertActionLog(db: D1Like, action: AgentAction, result: V
     .prepare(
       `INSERT INTO action_logs
          (id, action_id, created_at, agent_id, session_id, tool_name, arg_keys, tool_args, decision, risk_score, reasoning,
-          violated_policy, latency_ms, category, degraded, decided_by, retrieved_policies, pattern_notes, guardrails)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          violated_policy, latency_ms, category, degraded, decided_by, retrieved_policies, pattern_notes, guardrails, zip_facts)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       crypto.randomUUID(),
@@ -98,6 +99,8 @@ export async function insertActionLog(db: D1Like, action: AgentAction, result: V
       json(result.retrievedPolicies),
       json(result.patternNotes),
       json(result.guardrails),
+      // Vendor and budget names, not arguments, but mask PII on the way in anyway: this table is what a screen shows.
+      json(result.zipFacts?.map(maskPii)),
     )
     .run();
 }

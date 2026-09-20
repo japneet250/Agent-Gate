@@ -129,6 +129,15 @@ describe('spending limit', () => {
     assert.equal((await evaluate(action('approve_payment', { amount: 500 }))).decision, 'allow');
   });
 
+  it("reads an amount inside a JSON-string argument, as Zip's MCP tools send it", async () => {
+    const data = JSON.stringify({ vendor_id: 'v1', currency: 'USD', amount: 25000 });
+    const r = await evaluate(action('zip_create_purchase_order', { data }));
+    assert.equal(r.decision, 'block');
+    assert.equal(r.violatedPolicy, 'spending_limit');
+    assert.equal((await evaluate(action('zip_create_purchase_order', { data: JSON.stringify({ vendor_id: 'v1', amount: 400 }) }))).decision, 'allow');
+    assert.equal((await evaluate(action('write_note', { text: '{not json, amount: 999999' }))).decision, 'allow', 'invalid JSON stays plain text');
+  });
+
   it('parses string amounts and nested fields', async () => {
     assert.equal((await evaluate(action('approve_payment', { amount: '$1,200.50' }))).decision, 'block');
     assert.equal((await evaluate(action('create_purchase_order', { order: { total: 12000 } }))).decision, 'block');

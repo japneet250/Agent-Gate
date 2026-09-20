@@ -40,6 +40,7 @@ from agentgate_engine import (
     warmup,
 )
 from agentgate_engine.config import config
+from agentgate_engine.zip_client import zip_status
 from agentgate_engine.policy_admin import (
     D1PolicyBackend,
     configure_policy_backend,
@@ -68,6 +69,11 @@ async def lifespan(app: FastAPI):
         configure_policy_backend(D1PolicyBackend(session_store()))
     await reload_policies()
     print(f"[agentgate] storage — vectors: {_storage['vectors']}, sessions: {_storage['sessions']}")
+    zs = zip_status()
+    print(
+        f"[agentgate] zip grounding: {zs['state'].upper()}"
+        + (f" ({zs['reason']})" if zs["state"] == "off" else f" — {zs['base']}")
+    )
     indexed = await warmup()
     print(
         f"[agentgate] engine ready — {len(load_policies())} policies, "
@@ -186,6 +192,7 @@ async def health() -> dict[str, Any]:
         "tracing": tracing_enabled(),
         "openaiConfigured": config.has_openai(),
         "cloudflareConfigured": cloudflare_configured(),
+        "zip": zip_status(),
         "authRequired": bool(config.api_key),
         "storage": _storage,
         "stats": _stats,
