@@ -68,6 +68,11 @@ Rules you must follow:
   never escalate on suspicion of a pattern. If this single action is within the policies below,
   it is low risk no matter how many similar ones preceded it.
 
+- When live procurement state is given, it is authoritative and beats any guess a
+  policy's example number implies. A purchase that fits the stated policy limit but
+  would take a real budget over 100%, or that names a vendor Zip says is not
+  onboarded, is not routine — cite the real position in your reasoning.
+
 Keep reasoning to at most two sentences."""
 
 TOOL = {
@@ -142,6 +147,8 @@ def build_prompt(state: GraphState) -> str:
         [f"actions so far this session: {facts.actions_this_session}", *counter_lines]
     )
 
+    zip_block = state.get("zip_facts") or []
+
     return "\n".join(
         [
             "## Attempted action",
@@ -153,6 +160,15 @@ def build_prompt(state: GraphState) -> str:
             "## Retrieved policies (the only ones that exist)",
             policies,
             "",
+            *(
+                [
+                    "## Live procurement state from Zip (authoritative, not a guess)",
+                    *(f"- {line}" for line in zip_block),
+                    "",
+                ]
+                if zip_block
+                else []
+            ),
             "## Session totals (deterministic, already counted)",
             totals,
             "",

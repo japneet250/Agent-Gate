@@ -134,8 +134,18 @@ class TestEnforcement:
         })
         await upsert_policy(CRYPTO)
 
+        # Spelled out the way a real transfer would be. The original args were
+        # thin enough that the policy sat at rank 5 of 5 and dropped out of the
+        # retrieved set under the offline lexical embedder — which is a genuine
+        # signal about top_k, recorded in the retrieval notes, not a reason to
+        # test against an unrealistically bare action.
         d = await evaluate_detailed(
-            make_action("transfer_funds", {"to": "bc1qxy2kgdy", "amount": 250}, "crypto")
+            make_action(
+                "transfer_funds",
+                {"destination": "cryptocurrency wallet bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+                 "amount": 250, "memo": "vendor settlement"},
+                "crypto",
+            )
         )
         assert d.result.decision == "block"
         assert d.result.violated_policy == "Crypto Wallet Transfers"

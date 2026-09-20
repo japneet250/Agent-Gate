@@ -14,6 +14,7 @@ from .guardrails import check_latency_budget
 from .policy_store import is_indexed, load_policies, warm_policy_index
 from .state import GuardrailEvent, JudgeVerdict, SessionFacts
 from .stores import session_store
+from .zip_client import zip_context, zip_configured
 from .trace import start_trace
 
 
@@ -26,6 +27,8 @@ class EvalDetail:
     retrieved_policies: list[dict[str, Any]] = field(default_factory=list)
     pattern_notes: list[str] = field(default_factory=list)
     guardrails: list[GuardrailEvent] = field(default_factory=list)
+    # Real procurement state consulted for this decision, when Zip is wired.
+    zip_facts: list[str] | None = None
     # True when a node fell back instead of using its model — trust the score less.
     degraded: bool = False
 
@@ -39,6 +42,7 @@ class EvalDetail:
                 "patternNotes": self.pattern_notes,
                 "guardrails": [g.__dict__ for g in self.guardrails],
                 "degraded": self.degraded,
+                "zipFacts": self.zip_facts,
             }
         )
         return payload
@@ -99,11 +103,24 @@ async def evaluate_detailed(
             recentActions=recent,
         )
 
+        # Ground financial actions in Zip's real state before judging. Only for
+        # money-moving tools: a customer lookup has no budget to consult, and
+        # the round trip is not free.
+        zip_facts: list[str] | None = None
+        if zip_configured():
+            ctx = await zip_context(action.tool_args or {})
+            if ctx is not None:
+                from .zip_client import extract_amount as _amt
+
+                lines = ctx.as_prompt_lines(_amt(action.tool_args or {}))
+                zip_facts = lines or None
+
         state = await get_graph().ainvoke(
             {
                 "action": action,
                 "context": resolved_context,
                 "session_facts": session_facts,
+                "zip_facts": zip_facts,
                 "category": "other",
                 "category_confidence": 0.0,
                 "policies": [],
@@ -132,6 +149,7 @@ async def evaluate_detailed(
                 latencyMs=elapsed_ms(),
             ),
             category=state["category"],
+            zip_facts=zip_facts,
             retrieved_policies=[
                 {"name": p.name, "score": round(p.score, 3)} for p in state["policies"]
             ],

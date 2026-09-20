@@ -84,6 +84,14 @@ class Config:
     # never fine on a public URL.
     api_key: str = field(default_factory=lambda: os.getenv("AGENTGATE_API_KEY", ""))
 
+    # Zip — procurement. With a token set, financial actions are grounded in
+    # real budget, vendor and approval-chain state instead of a policy's guess.
+    zip_api_base: str = field(default_factory=lambda: os.getenv("ZIP_API_BASE", "https://api.ziphq.com/v1"))
+    zip_api_token: str = field(default_factory=lambda: os.getenv("ZIP_API_TOKEN", ""))
+    zip_budgets_path: str = field(default_factory=lambda: os.getenv("ZIP_BUDGETS_PATH", "/budgets"))
+    zip_vendors_path: str = field(default_factory=lambda: os.getenv("ZIP_VENDORS_PATH", "/vendors"))
+    zip_approvals_path: str = field(default_factory=lambda: os.getenv("ZIP_APPROVALS_PATH", "/approval-chains"))
+
     # Cloudflare. When account id + token + index/database are set, the engine
     # uses Vectorize for RAG and D1 for session state instead of memory.
     cloudflare_account_id: str = field(default_factory=lambda: os.getenv("CLOUDFLARE_ACCOUNT_ID", ""))

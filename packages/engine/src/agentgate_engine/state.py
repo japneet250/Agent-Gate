@@ -67,6 +67,8 @@ class GraphState(TypedDict, total=False):
     action: AgentAction
     context: SessionContext
     session_facts: SessionFacts
+    # Real procurement state from Zip, when configured. None means not consulted.
+    zip_facts: list[str] | None
     category: ActionCategory
     category_confidence: float
     policies: list[RetrievedPolicy]
