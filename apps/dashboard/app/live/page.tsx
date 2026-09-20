@@ -5,7 +5,8 @@ import Link from 'next/link';
 import { ArrowRight, Plug, Building2, Bot } from 'lucide-react';
 import { PERSONAS } from '@/lib/personas';
 import { AgentTerminal } from '@/components/demo/terminal';
-import { FlowDiagram, McpDiagram, HttpDiagram } from '@/components/demo/flow';
+import { McpDiagram, HttpDiagram } from '@/components/demo/flow';
+import { ArchitectureDiagram } from '@/components/demo/architecture';
 import { cn } from '@/lib/utils';
 
 /**
@@ -30,8 +31,8 @@ export default function LivePage() {
 
   return (
     <div className="mx-auto max-w-[1600px] px-5 py-6">
-      <section className="mb-5 grid items-center gap-6 lg:grid-cols-[minmax(0,27rem)_minmax(0,1fr)]">
-        <header>
+      <section className="mb-4">
+        <header className="max-w-3xl">
           <p className="mb-2 flex items-center gap-1.5 text-meta uppercase tracking-[0.12em] text-accent">
             <span className="relative flex h-1.5 w-1.5">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-75" />
@@ -40,19 +41,17 @@ export default function LivePage() {
             Live
           </p>
           <h1 className="text-[2rem] font-semibold leading-[1.15] tracking-tight text-paper">
-            A firewall between
-            <br />
-            your AI agents and
-            <br />
-            the real world.
+            A firewall between your AI agents and the real world.
           </h1>
-          <p className="mt-3 text-body leading-relaxed text-muted">
+          <p className="mt-2 text-body leading-relaxed text-muted">
             Agents email, move money and run SQL. Every call is intercepted{' '}
-            <span className="text-paper">before it runs</span>.
+            <span className="text-paper">before it runs</span> — allowed, held for a human, or blocked.
           </p>
         </header>
+      </section>
 
-        <FlowDiagram className="h-auto w-full max-w-[44rem] justify-self-end" />
+      <section className="surface no-blur mb-6 overflow-x-auto rounded-card p-4">
+        <ArchitectureDiagram className="h-auto w-full min-w-[56rem]" />
       </section>
 
       <section className="mb-6 grid gap-3 md:grid-cols-2">
