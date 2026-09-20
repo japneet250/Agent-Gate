@@ -64,11 +64,18 @@ class Config:
     allow_below: int = field(default_factory=lambda: int(_num("AGENTGATE_ALLOW_BELOW", 30)))
     block_at: int = field(default_factory=lambda: int(_num("AGENTGATE_BLOCK_AT", 70)))
 
-    # Pattern Detector thresholds.
-    session_spend_limit: float = field(default_factory=lambda: _num("AGENTGATE_SESSION_SPEND_LIMIT", 5000))
+    # Loop detection is a structural control and stays in code: an agent
+    # repeating one identical call is looping or injected, and that is true for
+    # every customer.
     repeated_call_limit: int = field(default_factory=lambda: int(_num("AGENTGATE_REPEATED_CALL_LIMIT", 10)))
-    data_access_limit: int = field(default_factory=lambda: int(_num("AGENTGATE_DATA_ACCESS_LIMIT", 25)))
-    permission_request_limit: int = field(default_factory=lambda: int(_num("AGENTGATE_PERMISSION_LIMIT", 3)))
+
+    # NOTE: cumulative spend, data-access volume and permission-escalation
+    # thresholds are NOT configured here. They are declared by the policies that
+    # enforce them (Accumulate:/Limit: in policies/*.md), so there is one source
+    # of truth per limit. AGENTGATE_SESSION_SPEND_LIMIT, AGENTGATE_DATA_ACCESS_LIMIT
+    # and AGENTGATE_PERMISSION_LIMIT were left behind by that change and did
+    # nothing; setting one would have silently had no effect, which is worse
+    # than the variable not existing.
 
     # Consistency guardrail: max allowed score drift for a repeated identical action.
     consistency_drift_limit: float = field(default_factory=lambda: _num("AGENTGATE_CONSISTENCY_DRIFT", 25))
