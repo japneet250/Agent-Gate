@@ -72,7 +72,7 @@ them:
 budget 'Marketing Q3': USD 2,100 remaining of 80,000 (97% already committed)
 this action would bring the budget to 102% of its total — this would take it OVER budget
 vendor 'Northwind Media' is NOT on the approved vendor list
-Zip's approval chain at this amount requires: Requester, Department Head
+Zip's approval steps on request R-1042: Department Head approval — Pending (Ana Diaz)
 open commitments not yet invoiced: 15,000
 ```
 
@@ -91,8 +91,8 @@ any policy file could catch that.
 
 | variable | default | status |
 | --- | --- | --- |
-| `ZIP_API_TOKEN` | — | required; empty disables grounding entirely |
-| `ZIP_API_BASE` | `https://staging-api.zip.com` | verified working |
+| `ZIP_API_TOKEN` (or `ZIP_API_KEY`) | — | required; empty disables grounding entirely. `ZIP_API_KEY` is Zip's own name and works too |
+| `ZIP_API_BASE` (or `ZIP_API_URL`) | `https://staging-api.zip.com` | verified working |
 | `ZIP_VENDORS_PATH` | `/vendors` | verified, returns live data |
 | `ZIP_APPROVALS_PATH` | `/approvals` | verified |
 | `ZIP_BUDGETS_PATH` | `/budgets` | **not readable over REST** — see below |
@@ -117,17 +117,18 @@ collection endpoints **reject unknown query parameters with a 400** rather than
 ignoring them — so there is no `?q=` to search with. Filtering happens client
 side.
 
-### Budgets are not readable over REST
+### Budgets are not readable in this environment
 
-`GET /budgets` returns 405 with `Allow: OPTIONS, PUT`. So does every variant
-tried (`/budget-actuals`, `/budgets/search`, `POST /budgets`). Budget state lives
-behind their **MCP** server instead, as `zip_search_budgets`.
+`GET /budgets` returns 405 with `Allow: OPTIONS, PUT`. Zip's MCP tool
+`zip_search_budgets` is a thin wrapper over that same route and fails the same
+way (`HTTP 405: Method Not Allowed`, checked against the live staging server; the
+tool takes only `page_size`/`page_token`). So budget state is **write-only** here:
+`zip_upsert_budgets` and `zip_upsert_budget_actuals` exist, no read does.
 
 The client notices the 405 once and stops asking, rather than paying for the
 round trip on every financial action and flagging the context degraded for a
-call that can never succeed. Restoring the budget half of the grounding means
-reading it through MCP — the gateway already holds an MCP connection to Zip, so
-that is where it belongs.
+call that can never succeed. Budget lines ("97% committed") therefore cannot come
+from Zip today. Vendor and approval facts can.
 
 ### What probing the live API established
 
@@ -152,21 +153,42 @@ root:
 route, or be reachable only once authenticated well enough to read their docs.
 That is the one piece of the grounding story still unresolved.
 
-### The token is being rejected
+### "Rejected" was the wrong header (resolved)
 
+An earlier version of this file recorded the token as rejected: every
+`Authorization` variant returned `The provided API key is not valid`. The key
+was fine — the header is `Zip-Api-Key` (see above), and the host is
+`staging-api.zip.com`, not production.
+
+### Why grounding can come back empty
+
+"Nothing came back" has several causes that look identical from outside. Run
+the probe, which names the one you have:
+
+```bash
+cd packages/engine && ./venv/bin/python zip_probe.py
 ```
-no auth header  →  {"message":"Missing API Key","code":"UNAUTHORIZED"}
-with our token  →  {"message":"The provided API key is not valid"}
-```
 
-The API distinguishes the two, so it is parsing the key and refusing it. Tried
-as `Authorization: Bearer`, `Authorization: Token`, bare `Authorization`,
-`X-Api-Key` and `x-zip-api-key` — all 401. The key is 38 characters, which may
-mean it is truncated.
+| Cause | What you see | Fix |
+| --- | --- | --- |
+| Grounding is off | `GET /health` shows `"zip": {"state": "off"}` | Set `ZIP_API_KEY` (or `ZIP_API_TOKEN`) |
+| The company has no data | `/vendors total=0`. The key works and the list is `{"list":[],"size":0,"total":0}` | Run Zip's demo workflow once (request, PO, bill) |
+| Arguments name no vendor | Judge is told "Zip returned no vendor or budget data" | Make sure the tool call carries a vendor name or id |
+| Wrong host or key | `AUTH FAILED (401)` | Staging host, and a key from `{your-domain}/manage/api-key` |
 
-**Ask Zip for:** a working key for the company they provisioned, the header they
-expect, and whether there is a sandbox host. `api-sandbox.ziphq.com` redirects
-to `api-sandbox.zip.com`, which 404s.
+Behaviour worth knowing:
+
+- An **empty** vendor list is reported as "Zip's vendor list is empty", never as
+  the vendor being unapproved. A vendor is called unapproved only when Zip
+  returned vendors and none matched.
+- If Zip returns only the first page (`total` larger than what came back), a
+  vendor missing from it is "status unknown", not unapproved.
+- Vendors are matched by **id first, then name**, and arguments are searched
+  when nested (`vendor: {id, name}`, line items).
+- Only procurement tools ask Zip. Read verbs (`check_budget`, `zip_search_*`)
+  and unrelated tools do not.
+- When Zip is consulted and has nothing, the judge is told so, and the response
+  carries that sentence in `zipFacts` instead of an empty list.
 
 The three lookups run concurrently, because the judge is on a latency budget.
 Every one fails soft: Zip unreachable degrades to policy-only reasoning and says

@@ -95,8 +95,17 @@ class Config:
     # real budget, vendor and approval-chain state instead of a policy's guess.
     # Zip's hackathon environment, from their setup docs. Not api.ziphq.com,
     # which is the production host and answers the same welcome banner.
-    zip_api_base: str = field(default_factory=lambda: os.getenv("ZIP_API_BASE", "https://staging-api.zip.com"))
-    zip_api_token: str = field(default_factory=lambda: os.getenv("ZIP_API_TOKEN", ""))
+    # Zip's setup doc (and ziphq-mcp) call these ZIP_API_URL / ZIP_API_KEY; this
+    # client originally read ZIP_API_BASE / ZIP_API_TOKEN. Following the doc left
+    # grounding silently off, so either spelling works. The explicit names win.
+    zip_api_base: str = field(
+        default_factory=lambda: os.getenv("ZIP_API_BASE")
+        or os.getenv("ZIP_API_URL")
+        or "https://staging-api.zip.com"
+    )
+    zip_api_token: str = field(
+        default_factory=lambda: os.getenv("ZIP_API_TOKEN") or os.getenv("ZIP_API_KEY") or ""
+    )
     # Endpoint reconnaissance against the live API (401 means the route exists
     # and only the key was rejected; 404 means it does not exist):
     #   /vendors      401  exists

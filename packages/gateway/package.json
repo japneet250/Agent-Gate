@@ -14,7 +14,8 @@
     "deploy": "wrangler deploy",
     "fake-engine": "tsx src/fake-engine.ts",
     "sentry:check": "tsx src/sentry-check.ts",
-    "mcp": "tsx src/mcp.ts"
+    "mcp": "tsx src/mcp.ts",
+    "zip:probe": "tsx src/zip-mcp-probe.ts"
   },
   "keywords": [],
   "author": "",

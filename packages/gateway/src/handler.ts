@@ -35,6 +35,8 @@ export interface ActionLogRow {
   decided_by: string | null;
   retrieved_policies: string | null;
   pattern_notes: string | null;
+  /** JSON array of what Zip said about the action; null when Zip was not consulted. */
+  zip_facts: string | null;
 }
 
 export interface HttpOptions {

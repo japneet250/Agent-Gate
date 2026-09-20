@@ -103,6 +103,24 @@ describe('audit log', () => {
     assert.ok(values.includes(0), 'degraded = 0');
   });
 
+  it('stores what Zip said, masked, and NULL when Zip was not consulted', async () => {
+    const { db, writes } = fakeDb();
+    const base = { riskScore: 70, decision: 'block' as const, reasoning: 'r', latencyMs: 5, decidedBy: 'judge' as const };
+    await insertActionLog(db, action('create_purchase_order', { amount: 4000 }), {
+      ...base, zipFacts: ["vendor 'Acme' is NOT on the approved vendor list", 'approver ana@example.com must sign'],
+    });
+    await insertActionLog(db, action('send_email', { body: 'hi' }), base);
+
+    const [withZip, withoutZip] = writes;
+    assert.ok(withZip.sql.includes('zip_facts'));
+    assert.equal((withZip.sql.match(/\?/g) ?? []).length, withZip.values.length, 'one placeholder per bound value');
+    const stored = withZip.values.find((v) => typeof v === 'string' && v.includes('NOT on the approved vendor list')) as string;
+    assert.ok(stored, 'facts are stored');
+    assert.ok(!stored.includes('ana@example.com'), 'an email inside a fact is masked');
+    assert.ok(stored.includes('***@example.com'));
+    assert.equal(withoutZip.values.at(-1), null, 'no Zip facts = NULL, not an empty list');
+  });
+
   it('never changes or delays the decision, even if recording fails', async () => {
     const evaluator = withAuditLog(createEvaluator(), async () => {
       throw new Error('disk full');

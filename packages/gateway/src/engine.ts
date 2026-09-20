@@ -49,6 +49,9 @@ export function parseEngineResult(body: unknown, roundTripMs: number): Verdict |
   const latency = pick(b, 'latencyMs', 'latency_ms');
   const category = pick(b, 'category');
   const list = (v: unknown) => (Array.isArray(v) ? v : undefined);
+  // The engine sends `zipFacts` as sentences, or null when Zip was not consulted. Keep only real strings.
+  const zipRaw = list(pick(b, 'zipFacts', 'zip_facts'));
+  const zipFacts = zipRaw?.filter((f): f is string => typeof f === 'string' && f.length > 0);
   return {
     riskScore: score,
     decision,
@@ -59,6 +62,7 @@ export function parseEngineResult(body: unknown, roundTripMs: number): Verdict |
     retrievedPolicies: list(pick(b, 'retrievedPolicies', 'retrieved_policies')),
     patternNotes: list(pick(b, 'patternNotes', 'pattern_notes')),
     guardrails: list(b.guardrails),
+    ...(zipFacts && zipFacts.length > 0 ? { zipFacts } : {}),
     degraded,
     decidedBy: 'judge',
   };

@@ -25,6 +25,9 @@ const COLUMNS = [
   'retrieved_policies', 'pattern_notes',
 ] as const;
 
+// Added by migration 0003. Kept apart so a database that has not had it applied yet still logs.
+const ZIP_COLUMN = 'zip_facts';
+
 export type D1Config = { accountId: string; apiToken: string; databaseId: string };
 
 export function d1ConfigFromEnv(env = process.env): D1Config | undefined {
@@ -69,17 +72,22 @@ export class D1ActionLog {
     // to overwrite or suppress an existing audit row by reusing one.
     const id = crypto.randomUUID();
     const argKeys = row.tool_args ?? '[]';
-    const values = [
+    const base = [
       id, row.action_id, row.created_at, row.agent_id, row.session_id, row.tool_name,
       argKeys, row.tool_args ?? null, row.decision, row.risk_score, row.reasoning,
       row.violated_policy ?? null, row.latency_ms, row.category ?? null,
       row.degraded ?? 0, row.decided_by ?? 'rules',
       row.retrieved_policies ?? null, row.pattern_notes ?? null,
     ];
-    await this.query(
-      `INSERT INTO action_logs (${COLUMNS.join(', ')}) VALUES (${COLUMNS.map(() => '?').join(', ')})`,
-      values,
-    );
+    const insert = (cols: readonly string[], vals: unknown[]) =>
+      this.query(`INSERT INTO action_logs (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`, vals);
+    try {
+      await insert([...COLUMNS, ZIP_COLUMN], [...base, row.zip_facts ?? null]);
+    } catch (err) {
+      // Migration 0003 not applied yet: log without the Zip facts rather than lose the audit row.
+      if (!String((err as Error).message).includes(ZIP_COLUMN)) throw err;
+      await insert(COLUMNS, base);
+    }
   }
 
   /** Rows decided after `sinceMs`, oldest first — the same contract the ring has. */

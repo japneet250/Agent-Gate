@@ -14,6 +14,7 @@ import type { AgentAction } from '@agentgate/shared';
 import type { ActionLogRow } from './handler.js';
 import type { Verdict } from './evaluate.js';
 import { describeArgs } from './log.js';
+import { maskPii } from './rules.js';
 
 const DEFAULT_CAPACITY = 500;
 
@@ -55,7 +56,7 @@ export class ActionLog {
   record(action: AgentAction, result: Verdict): void {
     const extra = result as Partial<{
       category: string; degraded: boolean;
-      retrievedPolicies: unknown[]; patternNotes: unknown[]; decidedBy: string;
+      retrievedPolicies: unknown[]; patternNotes: unknown[]; decidedBy: string; zipFacts: string[];
     }>;
     const row: ActionLogRow = {
       action_id: action.id,
@@ -77,6 +78,7 @@ export class ActionLog {
       decided_by: extra.decidedBy ?? (result.latencyMs < 50 ? 'rules' : 'judge'),
       retrieved_policies: extra.retrievedPolicies ? JSON.stringify(extra.retrievedPolicies) : null,
       pattern_notes: extra.patternNotes ? JSON.stringify(extra.patternNotes) : null,
+      zip_facts: extra.zipFacts ? JSON.stringify(extra.zipFacts.map(maskPii)) : null,
     };
     this.rows.push(row);
     this.trim();

@@ -12,6 +12,8 @@ export interface Verdict extends EvalResult {
   retrievedPolicies?: unknown[];
   patternNotes?: unknown[];
   guardrails?: unknown[];
+  /** What Zip said about this action (budget, vendor, approvers), as plain sentences. Undefined = Zip was not consulted. */
+  zipFacts?: string[];
   /** True when an engine node fell back instead of using its model: trust the score less. */
   degraded?: boolean;
   decidedBy?: DecidedBy;
