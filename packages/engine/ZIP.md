@@ -10,8 +10,12 @@ Two integrations, at different layers.
 
 ## 1. AgentGate in front of Zip's MCP server
 
-Zip publishes a **remote** MCP server. AgentGate is an MCP proxy, so it sits
-between the agent and Zip:
+Zip ships `ziphq-mcp`, run locally through `uv`. It exposes **131 tools — 66 of
+them write or destroy**: `zip_delete_user`, `zip_delete_vendor`,
+`zip_upsert_budgets`, the whole request/PO/invoice/approval surface. An agent
+pointed straight at it has all of that reach with nothing in between.
+
+AgentGate is an MCP proxy, so it sits in the middle:
 
 ```
 Claude / Cursor / your agent
@@ -24,10 +28,27 @@ Claude / Cursor / your agent
 ```
 
 ```bash
-export AGENTGATE_UPSTREAM_TOKEN="$ZIP_MCP_TOKEN"
-npm run mcp -w packages/gateway -- https://<zip-mcp-host>/mcp
-# older servers: AGENTGATE_UPSTREAM_TRANSPORT=sse
+uv tool install ziphq-mcp          # once
+
+export ZIP_API_URL=https://staging-api.zip.com
+export ZIP_API_KEY=<your key from {your-domain}/manage/api-key>
+export ZIP_MCP_MODE=readwrite      # without this you get 60 read tools, not 131
+
+npm run mcp -w packages/gateway -- zip
 ```
+
+Verified against Zip's real server:
+
+```
+AgentGate mirroring 131 Zip tools (66 of them write/destroy)
+
+  REFUSED  3269ms  zip_delete_vendor   "a destructive operation"
+  REFUSED  2503ms  zip_delete_user     "a destructive operation"
+  REFUSED  1811ms  zip_upsert_budgets  "$999,999,999 exceeds the limit"
+```
+
+A remote MCP server over HTTP or SSE also works — pass a URL instead of a server
+name, with `AGENTGATE_UPSTREAM_TOKEN` for auth.
 
 The agent sees Zip's real tools, unchanged. Every call is evaluated first.
 

@@ -86,9 +86,9 @@ class Config:
 
     # Zip — procurement. With a token set, financial actions are grounded in
     # real budget, vendor and approval-chain state instead of a policy's guess.
-    # Verified by probing the live API: the host answers "Welcome to Zip API!"
-    # at the root and there is no /v1 prefix.
-    zip_api_base: str = field(default_factory=lambda: os.getenv("ZIP_API_BASE", "https://api.ziphq.com"))
+    # Zip's hackathon environment, from their setup docs. Not api.ziphq.com,
+    # which is the production host and answers the same welcome banner.
+    zip_api_base: str = field(default_factory=lambda: os.getenv("ZIP_API_BASE", "https://staging-api.zip.com"))
     zip_api_token: str = field(default_factory=lambda: os.getenv("ZIP_API_TOKEN", ""))
     # Endpoint reconnaissance against the live API (401 means the route exists
     # and only the key was rejected; 404 means it does not exist):
