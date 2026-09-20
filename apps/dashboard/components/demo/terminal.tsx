@@ -98,7 +98,7 @@ export function AgentTerminal({ persona, onActivity }: { persona: Persona; onAct
 
   return (
     <div
-      className="flex h-[32rem] flex-col overflow-hidden rounded-card border border-white/10 bg-ink-950"
+      className="flex h-[36rem] flex-col overflow-hidden rounded-card border border-white/10 bg-ink-950"
       style={{ boxShadow: `0 0 0 1px ${persona.glow}, 0 24px 64px -32px rgba(0,0,0,0.95)` }}
     >
       {/* macOS window chrome: sells "a real machine" in one glance. */}
@@ -123,26 +123,16 @@ export function AgentTerminal({ persona, onActivity }: { persona: Persona; onAct
         </span>
       </div>
 
-      <div ref={scroller} className="flex-1 space-y-2 overflow-y-auto p-3 font-mono text-meta">
+      <div ref={scroller} className="flex-1 space-y-2.5 overflow-y-auto p-4 font-mono text-body leading-relaxed">
         {lines.length === 0 && (
           <div className="space-y-1.5">
-            <div className="mb-2.5 flex flex-wrap gap-1">
-              {persona.tools.map((t) => (
-                <span
-                  key={t.name}
-                  className="rounded-pill border border-white/10 px-1.5 py-0.5 text-meta text-dim"
-                >
-                  {t.name}
-                </span>
-              ))}
-            </div>
             <p className="text-dim">Try one, or type your own:</p>
             {persona.prompts.map((p) => (
               <button
                 key={p}
                 onClick={() => void run(p)}
                 disabled={busy}
-                className="block w-full truncate rounded-field border border-white/10 px-2 py-1.5 text-left text-muted transition hover:border-white/25 hover:text-paper disabled:opacity-50"
+                className="block w-full truncate rounded-field border border-white/10 px-2.5 py-2 text-left text-muted transition hover:border-white/25 hover:text-paper disabled:opacity-50"
               >
                 {p}
               </button>
@@ -189,21 +179,21 @@ export function AgentTerminal({ persona, onActivity }: { persona: Persona; onAct
           return (
             <div
               key={i}
-              className={cn('animate-slide-in rounded-field border-l-2 bg-ink-900 px-2.5 py-2', d.border)}
+              className={cn('animate-slide-in rounded-field border-l-2 bg-ink-900 px-3 py-2.5', d.border)}
             >
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                <d.Icon className={cn('h-3.5 w-3.5', d.cls)} strokeWidth={2.4} />
-                <span className={cn('font-semibold', d.cls)}>{d.label}</span>
-                <span className="text-dim">risk {l.riskScore}/100</span>
+                <d.Icon className={cn('h-4 w-4', d.cls)} strokeWidth={2.4} />
+                <span className={cn('text-[0.9rem] font-semibold tracking-wide', d.cls)}>{d.label}</span>
+                <span className="font-semibold text-paper">risk {l.riskScore}/100</span>
                 <span className="text-dim">· {fmtMs(l.latencyMs)}</span>
                 {/* The rule-vs-judge split is the cost story: most calls never
                     reach a model at all. */}
-                <span className="rounded-pill border border-white/10 px-1.5 text-dim">
+                <span className="rounded-pill border border-white/10 px-1.5 text-meta text-dim">
                   {l.decidedBy === 'rules' ? 'rule engine · no model' : 'LLM judge · RAG'}
                 </span>
               </div>
               <p className="mt-1 leading-snug text-muted">{l.reasoning}</p>
-              {l.violatedPolicy && <p className="mt-0.5 text-dim">policy: {l.violatedPolicy}</p>}
+              {l.violatedPolicy && <p className="mt-0.5 text-meta text-dim">policy: {l.violatedPolicy}</p>}
             </div>
           );
         })}
@@ -216,8 +206,8 @@ export function AgentTerminal({ persona, onActivity }: { persona: Persona; onAct
         )}
       </div>
 
-      <div className="flex items-center gap-2 border-t border-white/10 bg-ink-900 px-2.5 py-2">
-        <span style={{ color: persona.accent }} className="font-mono text-meta">
+      <div className="flex items-center gap-2 border-t border-white/10 bg-ink-900 px-3 py-2.5">
+        <span style={{ color: persona.accent }} className="font-mono text-body">
           ❯
         </span>
         <input
@@ -226,7 +216,7 @@ export function AgentTerminal({ persona, onActivity }: { persona: Persona; onAct
           onKeyDown={(e) => e.key === 'Enter' && void run(input)}
           disabled={busy}
           placeholder="ask this agent to do something…"
-          className="flex-1 bg-transparent font-mono text-meta text-paper outline-none placeholder:text-dim disabled:opacity-50"
+          className="flex-1 bg-transparent font-mono text-body text-paper outline-none placeholder:text-dim disabled:opacity-50"
         />
         <button
           onClick={() => void run(input)}
