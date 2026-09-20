@@ -172,9 +172,11 @@ fi
 cat <<BANNER
 
 ${B}────────────────────────────────────────────────────────────────${X}
-${B}  OPEN THIS:  http://localhost:${DASH_PORT}${X}
+${B}  OPEN THIS:  http://localhost:${DASH_PORT}/live${X}
 ${B}────────────────────────────────────────────────────────────────${X}
 
+  ${B}/live${X}        THE DEMO — three production agents in three terminals.
+                 Type anything at them. Every call is really evaluated.
   ${B}/present${X}     the opener — problem, mechanism, measurement
   ${B}/${X}            the Shield — live feed of every gated action
   ${B}/review${X}      the approval queue — escalations an admin signs off
@@ -182,7 +184,7 @@ ${B}─────────────────────────�
   ${B}/policies${X}    the policies the judge cites — and publish a new one
                  in plain English, live into the vector store
 
-${B}Fire traffic at it${X} — each of these lights up the feed live:
+${B}Or drive it from the terminal${X} — each lights up the feed live:
 
   ${D}./fire.sh support${X}       PII exfiltration → BLOCK on the fast path
   ${D}./fire.sh coding${X}        DROP TABLE, rm -rf → BLOCK, no model call

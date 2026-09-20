@@ -130,7 +130,7 @@ function Path({
 }) {
   const fmt = (ms: number) => (ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${ms < 10 ? ms.toFixed(2) : Math.round(ms)}ms`);
   return (
-    <div className="rounded-field border border-line p-3">
+    <div className="rounded-field border border-white/10 p-3">
       <div className="flex items-center gap-1.5 text-meta text-paper">
         {icon}
         {label}

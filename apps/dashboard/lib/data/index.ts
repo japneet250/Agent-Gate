@@ -104,20 +104,46 @@ export function useActionFeed() {
   };
 }
 
+/**
+ * The benchmark, re-read on an interval.
+ *
+ * A benchmark is a batch measurement, not a stream: 112 scenarios of real model
+ * calls, minutes per run. It cannot recompute per second and should not try.
+ *
+ * What it CAN do is notice. The harness writes report.json when it finishes, the
+ * API reads that file per request, and this poll means a run started during a
+ * demo lands on the screen by itself instead of needing a reload — which is the
+ * only sense in which this number is ever "live".
+ */
+const METRICS_POLL_MS = 10_000;
+
 export function useMetrics() {
   const provider = useMemo(getProvider, []);
   const [metrics, setMetrics] = useState<BenchmarkMetrics | null>(null);
   const [loaded, setLoaded] = useState(false);
   useEffect(() => {
     let alive = true;
-    void provider.metrics().then((m) => {
-      if (alive) {
-        setMetrics(m);
+    const read = () =>
+      void provider.metrics().then((m) => {
+        if (!alive) return;
+        // Replace only on a real change, so the charts do not re-animate every
+        // ten seconds for nothing.
+        setMetrics((prev) =>
+          prev &&
+          m &&
+          prev.generatedAt === m.generatedAt &&
+          prev.accuracy === m.accuracy &&
+          prev.scenarioCount === m.scenarioCount
+            ? prev
+            : m,
+        );
         setLoaded(true);
-      }
-    });
+      });
+    read();
+    const t = setInterval(read, METRICS_POLL_MS);
     return () => {
       alive = false;
+      clearInterval(t);
     };
   }, [provider]);
   return { metrics, loaded, mode: provider.mode };

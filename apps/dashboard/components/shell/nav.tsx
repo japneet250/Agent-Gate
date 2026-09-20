@@ -2,12 +2,14 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Activity, BarChart3, ShieldCheck, Inbox, Scale } from 'lucide-react';
+import { Activity, BarChart3, ShieldCheck, Inbox, Scale, Terminal } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { configuredMode } from '@/lib/data';
 import { ModeBadge } from './mode-badge';
 
 const LINKS = [
+  // Live leads: it is where a demo starts, and where a visitor should land.
+  { href: '/live', label: 'Live', icon: Terminal },
   { href: '/', label: 'Shield', icon: Activity },
   { href: '/analytics', label: 'Analytics', icon: BarChart3 },
   { href: '/review', label: 'Review', icon: Inbox },
