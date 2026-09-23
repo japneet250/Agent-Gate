@@ -6,3 +6,5 @@ out/
 *.tsbuildinfo
 # Generated from packages/evals at build time -- never hand-edited.
 lib/data/fixtures.generated.json
+.vercel
+.env*

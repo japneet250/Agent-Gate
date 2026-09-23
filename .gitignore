@@ -31,3 +31,6 @@ __pycache__/
 
 # Demo runtime logs from ./demo.sh
 .demo-logs/
+
+# Vercel project link (apps/dashboard is deployed from repo root; see .vercel/project.json)
+.vercel

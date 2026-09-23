@@ -3,7 +3,22 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**"]
+      // dist/** covers the TS packages. The dashboard's real output is
+      // .next/**, and its build reads several secrets at runtime — without
+      // both of these Turbo warns on every Vercel build ("no output files
+      // found", six env vars "missing from turbo.json") and never caches the
+      // dashboard build. Harmless in practice (Vercel finds .next/** anyway,
+      // and the vars still reach the runtime), but a build that warns on
+      // every deploy trains everyone to stop reading warnings.
+      "outputs": ["dist/**", ".next/**", "!.next/cache/**"],
+      "env": [
+        "AGENTGATE_API_KEY",
+        "ENGINE_URL",
+        "OPENAI_API_KEY",
+        "LANGFUSE_HOST",
+        "LANGFUSE_PUBLIC_KEY",
+        "LANGFUSE_SECRET_KEY"
+      ]
     },
     "typecheck": {
       "dependsOn": ["^build"]
